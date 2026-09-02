@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+fundforge-server
+cmd/server/server
+cmd/cli/client
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
