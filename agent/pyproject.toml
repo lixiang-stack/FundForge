@@ -1,0 +1,10 @@
+[project]
+name = "fundforge-agent"
+version = "0.1.0"
+description = "FundForge LangGraph agent — 基金投资研究工作流"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "pydantic>=2.0.0",
+]
