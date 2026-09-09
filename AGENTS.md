@@ -2,7 +2,7 @@
 
 ## What this is
 
-FundForge — fund investment research platform. Go 1.25 backend (`cmd/server` REST API, `cmd/cli` admin tool) plus a Python 3.11 collector (`collector/`, thin FastAPI wrapper around akshare). PostgreSQL via pgx/v5. Docs, comments, and SQL comments are largely Chinese — keep that style in user-facing docs.
+FundForge — fund investment research platform. Go 1.25 backend (`cmd/server` REST API, `cmd/cli` admin tool), a Python 3.11 collector (`collector/`, thin FastAPI wrapper around akshare), and a LangGraph agent (`agent/`, the AI research workflow per `docs/Plan.md`). PostgreSQL via pgx/v5. Docs, comments, and SQL comments are largely Chinese — keep that style in user-facing docs.
 
 ## Architecture (hexagonal)
 
@@ -19,6 +19,8 @@ go test ./... -count=1             # unit tests only; no DB or containers needed
 go vet ./...                       # no linter config exists; this is the only extra check
 go build -o server ./cmd/server    # MUST run from repo root (migrations path is relative: file://migrations)
 go build -o client ./cmd/cli
+uv --directory agent sync          # agent deps are managed by uv (pyproject.toml + uv.lock; collector still uses requirements.txt)
+uv --directory agent run python main.py "查询"   # run the agent workflow skeleton
 docker compose up -d               # full stack: postgres :5432, collector :8000, server :8080
 ```
 
