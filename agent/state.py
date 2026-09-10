@@ -11,6 +11,7 @@ data_quality_issues。完整基金数据与净值序列存放在外部 Store（s
 
 from typing import TypedDict
 
+from domain.analysis import AnalysisResult
 from domain.evidence import Evidence, ToolCallRecord
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
@@ -32,6 +33,9 @@ class FundForgeState(TypedDict, total=False):
     evidence: list[Evidence]
     tool_calls: list[ToolCallRecord]
     data_quality_issues: list[str]
+
+    # === Analyzer 产出 ===
+    analysis: AnalysisResult
 
     # === Output ===
     report: str

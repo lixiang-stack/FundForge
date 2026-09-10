@@ -36,6 +36,10 @@ def planner(state: FundForgeState) -> dict:
         logger.warning("planner: %s", note)
         plan = ResearchPlan(task_type=TaskType.FUND_RESEARCH, fund_ids=[], notes=[note])
     else:
-        plan = ResearchPlan(task_type=TaskType.FUND_RESEARCH, fund_ids=fund_ids)
+        plan = ResearchPlan(
+            task_type=TaskType.FUND_RESEARCH,
+            primary_fund_id=fund_ids[0],
+            fund_ids=fund_ids,
+        )
     logger.info("planner: fund_ids=%s", plan.fund_ids)
     return {"task_type": plan.task_type, "research_plan": plan}

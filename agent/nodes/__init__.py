@@ -1,5 +1,6 @@
 """FundForge Agent 节点集合（Node 合同见 docs/TechnicalContract.md §4）。"""
 
+from nodes.analyzer import AnalyzerNode
 from nodes.collector import CollectorNode
 from nodes.planner import extract_fund_codes, planner
 from nodes.router import router
@@ -10,5 +11,6 @@ __all__ = [
     "planner",
     "extract_fund_codes",
     "CollectorNode",
+    "AnalyzerNode",
     "synthesizer",
 ]
