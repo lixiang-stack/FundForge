@@ -10,7 +10,7 @@ Dependency direction: `cmd/*` → `internal/adapter` → `internal/application` 
 
 - Domain packages: `internal/domain/{fund,nav,alert,strategy,benchmark,calendar,marketdata,shared}`. Repository interfaces live in the domain package; implementations in `internal/adapter/persistence/postgres`.
 - HTTP routes: `internal/adapter/http/router.go`. All DI is manual in `cmd/server/main.go` — a new repo/use case must be wired there.
-- Collector boundary: `collector/main.py` contains no business logic. `FIELD_MAPS` in it translates Chinese akshare column names to English; those English names are the cross-service contract, mirrored by Go DTOs in `internal/adapter/collector/dto.go`. Keep both sides in sync.
+- Collector boundary: `collector/main.py` contains no business logic. `FIELD_MAPS` in it translates Chinese akshare column names to English; those English names are the cross-service contract, mirrored by Go DTOs in `internal/adapter/collector/dto.go`. Keep both sides in sync. The LangGraph agent (`agent/tools/`) also gets data only through the collector API — never call akshare directly in the agent.
 
 ## Commands
 
@@ -21,6 +21,7 @@ go build -o server ./cmd/server    # MUST run from repo root (migrations path is
 go build -o client ./cmd/cli
 uv --directory agent sync          # agent deps are managed by uv (pyproject.toml + uv.lock; collector still uses requirements.txt)
 uv --directory agent run python main.py "查询"   # run the agent workflow skeleton
+uv --directory agent run pytest    # agent unit tests (mocked collector, no services needed)
 docker compose up -d               # full stack: postgres :5432, collector :8000, server :8080
 ```
 

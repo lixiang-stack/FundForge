@@ -1,11 +1,13 @@
-"""FundForge Agent 入口脚本（Phase 0）。
+"""FundForge Agent 入口脚本（Phase 1）。
 
 用法：
-    python main.py "任意问题"
+    uv run python main.py "分析基金 519770 是否适合长期持有"
 
 行为：
-    运行空工作流 router → planner → synthesizer，输出固定字符串报告。
-    不包含真实 Tool、真实 LLM 调用、真实数据。
+    运行 router → planner → collector → synthesizer 工作流。
+    Planner 从 query 中提取基金代码，Collector 经 collector service
+    采集基金数据（结构化摘要 + Evidence），Synthesizer 输出报告。
+    不包含 LLM 调用（Phase 3 引入）。
 """
 
 import logging
@@ -36,7 +38,18 @@ def main() -> None:
     print()
     print(result["report"])
     print()
-    logger.info("final state: %s", result)
+
+    print("=== funds_summary ===")
+    for s in result.get("funds_summary", []):
+        print(s.model_dump_json())
+    print()
+    print("=== evidence ===")
+    for e in result.get("evidence", []):
+        print(e.model_dump_json())
+    print()
+    print("=== tool_calls ===")
+    for t in result.get("tool_calls", []):
+        print(t.model_dump_json())
 
 
 if __name__ == "__main__":
