@@ -1,0 +1,37 @@
+"""Evidence 与可观测性模型。
+
+合同见 docs/TechnicalContract.md §8 / §12。
+- Evidence 只允许追加，不允许修改历史记录（State Rules §2.5）。
+- 每个 Claim 必须绑定 evidence_ids（Claim 模型在 Phase 3 定义）。
+"""
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
+
+class Evidence(BaseModel):
+    id: str
+    evidence_type: Literal["fund_data", "market_data", "calculation", "research", "manager"]
+    source: str
+    source_detail: str | None = None
+    as_of: datetime | None = None
+    value: str | float | dict | list | None = None
+    data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
+    confidence: float = 1.0
+    raw_ref: str | None = None      # 指向外部 Store 中的完整原始数据
+
+
+class ToolCallRecord(BaseModel):
+    """单次 Tool 调用记录（可观测性合同 §12）。"""
+
+    tool_name: str
+    arguments: dict[str, Any]
+    started_at: datetime
+    finished_at: datetime
+    success: bool
+    error: str | None = None
+
+
+__all__ = ["Evidence", "ToolCallRecord"]
