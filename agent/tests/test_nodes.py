@@ -19,7 +19,16 @@ class TestPlanner:
         result = planner({"user_query": "帮我推荐基金"})
         plan = result["research_plan"]
         assert plan.fund_ids == []
+        assert plan.primary_fund_id is None
         assert plan.notes
+
+
+class TestPlannerPrimary:
+    def test_first_code_is_primary(self):
+        result = planner({"user_query": "对比 000001 和 519770"})
+        plan = result["research_plan"]
+        assert plan.fund_ids == ["000001", "519770"]
+        assert plan.primary_fund_id == "000001"
 
 
 class TestCollectorNode:
