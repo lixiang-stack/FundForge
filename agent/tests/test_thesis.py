@@ -87,7 +87,7 @@ class DynamicThesisProvider:
             confidence=0.5,
             risks=["历史业绩不代表未来表现"],
         )
-        return LLMResponse(content=thesis.model_dump_json())
+        return LLMResponse(content=thesis.model_dump_json(), input_tokens=120, output_tokens=60)
 
 
 class TestThesisNode:
