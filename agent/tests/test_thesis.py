@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from domain.thesis import Claim, InvestmentThesis
+from domain.report import render_markdown
 from llm.base import LLMError, LLMResponse, Message
 from nodes.thesis import ThesisNode, build_thesis_prompt
 from tests.conftest import FUND_CODE, make_transport
@@ -168,8 +169,9 @@ class TestThesisInGraph:
                 assert c.evidence_ids
                 assert set(c.evidence_ids) <= valid_ids
             # 报告包含论点段落
-            assert "投资论点" in result["report"]
-            assert "免责声明" in result["report"]
+            report = result["report"]
+            assert report.investment_thesis is not None
+            assert "免责声明" in render_markdown(report)
         finally:
             client.close()
 
@@ -183,6 +185,8 @@ class TestThesisInGraph:
             result = graph.invoke({"request_id": "t4", "user_query": f"分析基金 {FUND_CODE}"})
             assert "investment_thesis" not in result
             assert any("LLM 未配置" in i for i in result.get("data_quality_issues", []))
-            assert "免责声明" in result["report"]
+            report = result["report"]
+            assert report.investment_thesis is None
+            assert "免责声明" in render_markdown(report)
         finally:
             client.close()
