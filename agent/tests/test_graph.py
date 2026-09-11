@@ -27,6 +27,11 @@ class TestConditionalRouting:
             valid_ids = {e.id for e in result["evidence"]}
             for c in thesis.claims:
                 assert set(c.evidence_ids) <= valid_ids
+            # 结构化 Report：关键结论可追溯到 Claim
+            report = result["report"]
+            assert report.metadata.thesis_generated is True
+            assert report.key_claims == thesis.claims
+            assert any("不构成任何投资建议" in r for r in report.risks_and_disclaimers)
         finally:
             client.close()
 
@@ -38,8 +43,10 @@ class TestConditionalRouting:
             assert result.get("funds_summary", []) == []
             assert result.get("tool_calls", []) == []
             assert result.get("evidence", []) == []
-            # synthesizer 输出引导信息
-            assert "未能采集到基金数据" in result["report"]
-            assert "6 位基金代码" in result["report"]
+            # 降级 Report：结构完整，包含引导信息与免责声明
+            report = result["report"]
+            assert "未能采集到基金数据" in report.executive_summary
+            assert any("6 位基金代码" in g for g in report.data_gaps_and_limitations)
+            assert any("不构成任何投资建议" in r for r in report.risks_and_disclaimers)
         finally:
             client.close()

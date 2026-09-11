@@ -15,6 +15,7 @@ import sys
 import uuid
 
 from graph import build_graph
+from domain.report import render_markdown
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,13 +36,13 @@ def main() -> None:
     }
     result = graph.invoke(state)
 
+    report = result["report"]
     print()
-    print(result["report"])
+    print(render_markdown(report))
     print()
+    print("=== report (json) ===")
+    print(report.model_dump_json(indent=2))
 
-    print("=== funds_summary ===")
-    for s in result.get("funds_summary", []):
-        print(s.model_dump_json())
     print()
     print("=== evidence ===")
     for e in result.get("evidence", []):
