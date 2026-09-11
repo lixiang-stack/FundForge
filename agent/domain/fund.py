@@ -20,6 +20,15 @@ class NAVPoint(BaseModel):
     daily_return: float | None = None
 
 
+class Holding(BaseModel):
+    """股票持仓（原始事实，存放于外部 Store）。"""
+
+    stock_code: str
+    stock_name: str
+    hold_ratio: float | None = None     # 占净值比例（%）
+    report_date: str | None = None      # 报告期（如 "2025-06-30"）
+
+
 class Fund(BaseModel):
     """基金完整信息（存放于外部 Store，State 不直接携带）。"""
 
@@ -101,6 +110,7 @@ def quality_of(*fields: object) -> DataQuality:
 
 __all__ = [
     "NAVPoint",
+    "Holding",
     "Fund",
     "FundSummary",
     "FundPerformance",

@@ -17,8 +17,10 @@ from domain.evidence import Evidence, ToolCallRecord
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report
+from domain.research import ResearchItem
 from domain.task_type import TaskType
 from domain.thesis import Claim, InvestmentThesis
+from domain.evidence import TokenUsage
 
 
 class FundForgeState(TypedDict, total=False):
@@ -32,6 +34,7 @@ class FundForgeState(TypedDict, total=False):
 
     # === Collector 产出（摘要 + ID，完整数据在外部 Store） ===
     fund_ids: list[str]
+    peer_fund_ids: list[str]
     funds_summary: list[FundSummary]
     evidence: list[Evidence]
     tool_calls: list[ToolCallRecord]
@@ -43,6 +46,12 @@ class FundForgeState(TypedDict, total=False):
     # === Thesis 产出 ===
     claims: list[Claim]
     investment_thesis: InvestmentThesis
+
+    # === Researcher 产出 ===
+    research_items: list[ResearchItem]
+
+    # === 可观测性（§12） ===
+    token_usage: TokenUsage
 
     # === Evaluator / Repair 产出（iteration 硬限制 max=1） ===
     evaluation: EvaluationResult

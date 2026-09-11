@@ -20,7 +20,7 @@ _MANDATORY_DISCLAIMER = "本报告由程序自动生成，不构成任何投资�
 
 
 class ReportMetadata(BaseModel):
-    """报告元信息（§11：token / cost / tool_calls 等，Phase 6 扩展 token 统计）。"""
+    """报告元信息（§11：token / cost / tool_calls 等；estimated_cost 由 Phase 7 接入）。"""
 
     fund_count: int = 0
     evidence_count: int = 0
@@ -30,6 +30,9 @@ class ReportMetadata(BaseModel):
     analysis_engine: str = "fundforge-analysis-engine"
     evaluation_status: str | None = None    # pass | fail（未运行评估时为 None）
     repair_applied: bool = False
+    llm_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class Report(BaseModel):
@@ -67,6 +70,11 @@ def render_markdown(report: Report) -> str:
         evaluation_bits.append("已执行修复")
     if evaluation_bits:
         header_meta.append(" | ".join(evaluation_bits))
+    if report.metadata.llm_calls:
+        header_meta.append(
+            f"Token：入 {report.metadata.input_tokens} / 出 {report.metadata.output_tokens}"
+            f"（{report.metadata.llm_calls} 次 LLM 调用）"
+        )
     lines += [
         *header_meta,
         "",

@@ -15,6 +15,7 @@
 """
 
 import logging
+from typing import TypedDict
 
 from domain.evaluation import EvaluationResult, EvaluationStatus, RepairAction, RepairActionType
 from domain.evidence import Evidence
@@ -29,10 +30,19 @@ _CONFIDENCE_FACTOR = 0.5
 _MIN_CONFIDENCE = 0.05
 
 
+class RepairOutput(TypedDict, total=False):
+    """Repair 节点输出（§4：有限修正后的 claims / thesis + repair_actions；iteration）。"""
+
+    investment_thesis: InvestmentThesis
+    claims: list[Claim]
+    repair_actions: list[str]
+    iteration: int
+
+
 class RepairNode:
     """Repair 节点：按 Evaluator 指出的问题做有限修正。"""
 
-    def __call__(self, state: FundForgeState) -> dict:
+    def __call__(self, state: FundForgeState) -> RepairOutput:
         evaluation = coerce_model(state.get("evaluation"), EvaluationResult)
         thesis = coerce_model(state.get("investment_thesis"), InvestmentThesis)
         claims = [
@@ -139,4 +149,4 @@ def _norm_evidence(state: FundForgeState) -> list[Evidence]:
     ]
 
 
-__all__ = ["RepairNode"]
+__all__ = ["RepairNode", "RepairOutput"]

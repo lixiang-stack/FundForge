@@ -9,9 +9,11 @@
 
 import logging
 from datetime import datetime
+from typing import TypedDict
 
 from domain.analysis import AnalysisResult
 from domain.evaluation import EvaluationResult, EvaluationStatus
+from domain.evidence import TokenUsage
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report, ReportMetadata, render_markdown
@@ -31,74 +33,94 @@ _INSUFFICIENT_EVIDENCE_NOTE = (
 )
 
 
+class SynthesizerOutput(TypedDict, total=False):
+    """Synthesizer 节点输出（§4：report）。"""
+
+    report: Report
+
+
+class SynthesizerNode:
+    """Synthesizer 节点：组装结构化报告（§11）。"""
+
+    def __call__(self, state: FundForgeState) -> SynthesizerOutput:
+        # State 经 LangGraph 回传后可能是 dict，统一归一化为模型
+        summaries = [
+            s if isinstance(s, FundSummary) else FundSummary.model_validate(s)
+            for s in state.get("funds_summary", [])
+        ]
+        evidence = state.get("evidence", [])
+        tool_calls = state.get("tool_calls", [])
+        issues = state.get("data_quality_issues", [])
+        analysis = coerce_model(state.get("analysis"), AnalysisResult)
+        thesis = coerce_model(state.get("investment_thesis"), InvestmentThesis)
+        usage = coerce_model(state.get("token_usage"), TokenUsage) or TokenUsage()
+        plan = ResearchPlan.from_state(state.get("research_plan"))
+        notes = list(plan.notes) if plan else []
+
+        primary = summaries[0] if summaries else None
+        data_gaps = [*notes, *(thesis.data_gaps if thesis else [])]
+        if not summaries and not notes:
+            data_gaps.append(_NO_FUND_GUIDANCE)
+        if thesis is None and evidence:
+            data_gaps.append(_NO_THESIS_NOTE)
+
+        evaluation = coerce_model(state.get("evaluation"), EvaluationResult)
+        repair_applied = int(state.get("iteration", 0)) > 0
+        if evaluation is not None and evaluation.status == EvaluationStatus.FAIL:
+            # §4 Repair 原则：仍 Fail → 强制进入 Synthesizer，显式标注证据不足
+            data_gaps.append(_INSUFFICIENT_EVIDENCE_NOTE)
+
+        report = Report(
+            title=(
+                f"FundForge 基金研究报告：{primary.name}（{primary.id}）"
+                if primary
+                else "FundForge 基金研究报告"
+            ),
+            generated_at=datetime.now(),
+            request_id=state.get("request_id", ""),
+            executive_summary=_executive_summary(primary, summaries, analysis, thesis),
+            fund_overview=summaries,
+            performance_analysis=_performance_text(analysis),
+            risk_analysis=_risk_text(analysis),
+            peer_comparison=_peer_text(analysis),
+            manager_analysis=(
+                f"{primary.id} 现任基金经理：{primary.manager_name}。"
+                if primary and primary.manager_name
+                else None
+            ),
+            investment_thesis=thesis,
+            key_claims=list(thesis.claims) if thesis else [],
+            data_gaps_and_limitations=data_gaps,
+            risks_and_disclaimers=[
+                *(thesis.risks if thesis else []),
+                _DATA_ADVISORY,
+                _DISCLAIMER,
+            ],
+            analysis=analysis,
+            metadata=ReportMetadata(
+                fund_count=len(summaries),
+                evidence_count=len(evidence),
+                tool_call_count=len(tool_calls),
+                data_quality_issue_count=len(issues),
+                thesis_generated=thesis is not None,
+                evaluation_status=evaluation.status if evaluation else None,
+                repair_applied=repair_applied,
+                llm_calls=usage.llm_calls,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            ),
+        )
+        logger.info(
+            "synthesizer: report built (%d funds, thesis=%s)",
+            len(summaries),
+            thesis is not None,
+        )
+        return SynthesizerOutput(report=report)
+
+
 def _fmt_pct(value: float | None) -> str:
+    """小数 → 百分比字符串（2 位小数）；None → 未知。"""
     return f"{value * 100:.2f}%" if value is not None else "未知"
-
-
-def synthesizer(state: FundForgeState) -> dict:
-    # State 经 LangGraph 回传后可能是 dict，统一归一化为模型
-    summaries = [
-        s if isinstance(s, FundSummary) else FundSummary.model_validate(s)
-        for s in state.get("funds_summary", [])
-    ]
-    evidence = state.get("evidence", [])
-    tool_calls = state.get("tool_calls", [])
-    issues = state.get("data_quality_issues", [])
-    analysis = coerce_model(state.get("analysis"), AnalysisResult)
-    thesis = coerce_model(state.get("investment_thesis"), InvestmentThesis)
-    plan = ResearchPlan.from_state(state.get("research_plan"))
-    notes = list(plan.notes) if plan else []
-
-    primary = summaries[0] if summaries else None
-    data_gaps = [*notes, *(thesis.data_gaps if thesis else [])]
-    if not summaries and not notes:
-        data_gaps.append(_NO_FUND_GUIDANCE)
-    if thesis is None and evidence:
-        data_gaps.append(_NO_THESIS_NOTE)
-
-    evaluation = coerce_model(state.get("evaluation"), EvaluationResult)
-    repair_applied = int(state.get("iteration", 0)) > 0
-    if evaluation is not None and evaluation.status == EvaluationStatus.FAIL:
-        # §4 Repair 原则：仍 Fail → 强制进入 Synthesizer，显式标注证据不足
-        data_gaps.append(_INSUFFICIENT_EVIDENCE_NOTE)
-
-    report = Report(
-        title=f"FundForge 基金研究报告：{primary.name}（{primary.id}）" if primary else "FundForge 基金研究报告",
-        generated_at=datetime.now(),
-        request_id=state.get("request_id", ""),
-        executive_summary=_executive_summary(primary, summaries, analysis, thesis),
-        fund_overview=summaries,
-        performance_analysis=_performance_text(analysis),
-        risk_analysis=_risk_text(analysis),
-        peer_comparison=_peer_text(analysis),
-        manager_analysis=(
-            f"{primary.id} 现任基金经理：{primary.manager_name}。" if primary and primary.manager_name else None
-        ),
-        investment_thesis=thesis,
-        key_claims=list(thesis.claims) if thesis else [],
-        data_gaps_and_limitations=data_gaps,
-        risks_and_disclaimers=[
-            *(thesis.risks if thesis else []),
-            _DATA_ADVISORY,
-            _DISCLAIMER,
-        ],
-        analysis=analysis,
-        metadata=ReportMetadata(
-            fund_count=len(summaries),
-            evidence_count=len(evidence),
-            tool_call_count=len(tool_calls),
-            data_quality_issue_count=len(issues),
-            thesis_generated=thesis is not None,
-            evaluation_status=evaluation.status if evaluation else None,
-            repair_applied=repair_applied,
-        ),
-    )
-    logger.info(
-        "synthesizer: report built (%d funds, thesis=%s)",
-        len(summaries),
-        thesis is not None,
-    )
-    return {"report": report}
 
 
 def _executive_summary(
@@ -159,8 +181,11 @@ def _peer_text(analysis: AnalysisResult | None) -> str | None:
             f"年化波动 {_fmt_pct(row.annual_volatility)}，"
             f"最大回撤 {_fmt_pct(row.max_drawdown)}，夏普 {sharpe}"
         )
-    lines.append("注：各基金指标基于其自身全部历史净值计算，区间起点不同，横向对比仅供参考（后续版本将做区间对齐）。")
+    lines.append(
+        "注：各基金指标基于其自身全部历史净值计算，区间起点不同，"
+        "横向对比仅供参考（后续版本将做区间对齐）。"
+    )
     return "\n".join(lines)
 
 
-__all__ = ["synthesizer", "render_markdown"]
+__all__ = ["SynthesizerNode", "SynthesizerOutput", "render_markdown"]

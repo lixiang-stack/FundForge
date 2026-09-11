@@ -20,6 +20,7 @@ NavIndicator = Literal["unit", "acc"]
 FUND_LIST_PATH = "/api/funds"
 FUND_DETAIL_PATH = "/api/funds/{code}/detail"
 FUND_NAV_PATH = "/api/funds/{code}/nav"
+FUND_HOLDINGS_PATH = "/api/funds/{code}/holdings/stock"
 
 
 def collector_source(path: str) -> str:
@@ -65,6 +66,12 @@ class CollectorClient:
         params = {"indicator": _NAV_INDICATOR_PARAM[indicator], "period": period}
         return self._get(FUND_NAV_PATH.format(code=code), params=params)
 
+    # ---- Stock Holdings ----
+
+    def get_fund_holdings(self, code: str, year: str | None = None) -> list[dict[str, Any]]:
+        params = {"date": year} if year else None
+        return self._get(FUND_HOLDINGS_PATH.format(code=code), params=params)
+
     # ---- Fund List（全量，进程内缓存，用于 search_funds） ----
 
     def list_funds(self) -> list[dict[str, Any]]:
@@ -101,5 +108,6 @@ __all__ = [
     "FUND_LIST_PATH",
     "FUND_DETAIL_PATH",
     "FUND_NAV_PATH",
+    "FUND_HOLDINGS_PATH",
     "collector_source",
 ]
