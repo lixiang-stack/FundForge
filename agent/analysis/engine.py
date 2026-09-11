@@ -15,6 +15,7 @@ import math
 
 from domain.analysis import FundMetrics
 from domain.fund import NAVPoint
+from domain.shared import DataQuality
 
 TRADING_DAYS_PER_YEAR = 252
 DAYS_PER_YEAR = 365
@@ -84,13 +85,13 @@ def sharpe_ratio(returns: list[float], risk_free_daily: float = 0.0) -> float | 
     return mu / math.sqrt(var) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
-def _quality_of(n_valid: int) -> str:
+def _quality_of(n_valid: int) -> DataQuality:
     """有效净值点数量 → 数据质量：0 missing / 1 partial / ≥2 complete。"""
     if n_valid == 0:
-        return "missing"
+        return DataQuality.MISSING
     if n_valid == 1:
-        return "partial"
-    return "complete"
+        return DataQuality.PARTIAL
+    return DataQuality.COMPLETE
 
 
 def compute_fund_metrics(points: list[NAVPoint]) -> FundMetrics:

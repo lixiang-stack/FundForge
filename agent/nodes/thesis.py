@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from domain.evidence import Evidence
 from domain.thesis import Claim, ClaimType, InvestmentThesis, Strength
+from domain.shared import to_jsonable
 from llm.base import LLMError, LLMProvider, Message
 from state import FundForgeState
 
@@ -47,13 +48,6 @@ _SYSTEM_PROMPT = f"""你是基金投资研究员，基于给定的事实数据�
 }}"""
 
 
-def _dump(model_or_dict):
-    """Pydantic 模型 → JSON dict；dict/None 原样返回。"""
-    if model_or_dict is None or isinstance(model_or_dict, dict):
-        return model_or_dict
-    return model_or_dict.model_dump(mode="json")
-
-
 def build_thesis_prompt(state: FundForgeState) -> list[Message]:
     """组装 Thesis 节点的上下文：用户问题 + 摘要 + 分析 + Evidence。"""
     # State 经 LangGraph 回传后可能是 dict，统一归一化为 JSON 安全结构
@@ -67,7 +61,7 @@ def build_thesis_prompt(state: FundForgeState) -> list[Message]:
             s if isinstance(s, dict) else s.model_dump(mode="json")
             for s in state.get("funds_summary", [])
         ],
-        "analysis": _dump(state.get("analysis")),
+        "analysis": to_jsonable(state.get("analysis")),
         "evidence": [e.model_dump(mode="json") for e in evidence],
         "data_quality_issues": state.get("data_quality_issues", []),
     }

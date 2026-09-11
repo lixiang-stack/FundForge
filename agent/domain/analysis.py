@@ -7,7 +7,8 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from domain.fund import DataQuality
+from domain.fund import FundSummary
+from domain.shared import DataQuality
 
 
 class PerformanceAnalysis(BaseModel):
@@ -19,7 +20,7 @@ class PerformanceAnalysis(BaseModel):
     nav_point_count: int = 0
     cumulative_return: float | None = None
     annualized_return: float | None = None
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 class RiskAnalysis(BaseModel):
@@ -29,7 +30,7 @@ class RiskAnalysis(BaseModel):
     annual_volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 class PeerMetricsRow(BaseModel):
@@ -60,7 +61,7 @@ class FundMetrics(BaseModel):
     annual_volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 class AnalysisResult(BaseModel):

@@ -5,6 +5,7 @@ V1 结构刻意保持最小；后续 Phase 按需扩展（对比基金、研究�
 
 from pydantic import BaseModel, Field
 
+from domain.shared import coerce_model
 from domain.task_type import TaskType
 
 
@@ -17,9 +18,7 @@ class ResearchPlan(BaseModel):
     @classmethod
     def from_state(cls, value: "ResearchPlan | dict | None") -> "ResearchPlan | None":
         """从 State 中归一化 research_plan（LangGraph 可能回传 dict）。"""
-        if value is None:
-            return None
-        return cls.model_validate(value) if isinstance(value, dict) else value
+        return coerce_model(value, cls)
 
 
 __all__ = ["ResearchPlan"]

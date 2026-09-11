@@ -11,9 +11,11 @@ import logging
 from datetime import datetime
 
 from domain.analysis import AnalysisResult
+from domain.evaluation import EvaluationResult, EvaluationStatus
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report, ReportMetadata, render_markdown
+from domain.shared import coerce_model
 from domain.thesis import InvestmentThesis
 from state import FundForgeState
 
@@ -24,6 +26,9 @@ _DATA_ADVISORY = "历史业绩不代表未来表现，量化指标基于历史�
 _NO_FUND_GUIDANCE = "请在提问中包含 6 位基金代码，例如：分析基金 519770"
 
 _NO_THESIS_NOTE = "投资论点未生成（LLM 不可用或校验未通过），本报告仅包含数据与确定性分析。"
+_INSUFFICIENT_EVIDENCE_NOTE = (
+    "证据不足：评估未通过（经 1 次修复后仍存在问题），上述结论的可靠性受限，请谨慎参考。"
+)
 
 
 def _fmt_pct(value: float | None) -> str:
@@ -39,8 +44,8 @@ def synthesizer(state: FundForgeState) -> dict:
     evidence = state.get("evidence", [])
     tool_calls = state.get("tool_calls", [])
     issues = state.get("data_quality_issues", [])
-    analysis = _normalize(state.get("analysis"), AnalysisResult)
-    thesis = _normalize(state.get("investment_thesis"), InvestmentThesis)
+    analysis = coerce_model(state.get("analysis"), AnalysisResult)
+    thesis = coerce_model(state.get("investment_thesis"), InvestmentThesis)
     plan = ResearchPlan.from_state(state.get("research_plan"))
     notes = list(plan.notes) if plan else []
 
@@ -50,6 +55,12 @@ def synthesizer(state: FundForgeState) -> dict:
         data_gaps.append(_NO_FUND_GUIDANCE)
     if thesis is None and evidence:
         data_gaps.append(_NO_THESIS_NOTE)
+
+    evaluation = coerce_model(state.get("evaluation"), EvaluationResult)
+    repair_applied = int(state.get("iteration", 0)) > 0
+    if evaluation is not None and evaluation.status == EvaluationStatus.FAIL:
+        # §4 Repair 原则：仍 Fail → 强制进入 Synthesizer，显式标注证据不足
+        data_gaps.append(_INSUFFICIENT_EVIDENCE_NOTE)
 
     report = Report(
         title=f"FundForge 基金研究报告：{primary.name}（{primary.id}）" if primary else "FundForge 基金研究报告",
@@ -78,6 +89,8 @@ def synthesizer(state: FundForgeState) -> dict:
             tool_call_count=len(tool_calls),
             data_quality_issue_count=len(issues),
             thesis_generated=thesis is not None,
+            evaluation_status=evaluation.status if evaluation else None,
+            repair_applied=repair_applied,
         ),
     )
     logger.info(
@@ -86,13 +99,6 @@ def synthesizer(state: FundForgeState) -> dict:
         thesis is not None,
     )
     return {"report": report}
-
-
-def _normalize(value, model):
-    """dict → Pydantic 模型；None/模型原样返回。"""
-    if value is None or isinstance(value, model):
-        return value
-    return model.model_validate(value)
 
 
 def _executive_summary(

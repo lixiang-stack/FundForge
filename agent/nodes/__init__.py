@@ -2,7 +2,9 @@
 
 from nodes.analyzer import AnalyzerNode
 from nodes.collector import CollectorNode
+from nodes.evaluator import EvaluatorNode
 from nodes.planner import extract_fund_codes, planner
+from nodes.repair import RepairNode
 from nodes.router import router
 from nodes.synthesizer import synthesizer
 from nodes.thesis import ThesisNode
@@ -14,5 +16,7 @@ __all__ = [
     "CollectorNode",
     "AnalyzerNode",
     "ThesisNode",
+    "EvaluatorNode",
+    "RepairNode",
     "synthesizer",
 ]
