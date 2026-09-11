@@ -28,6 +28,8 @@ class ReportMetadata(BaseModel):
     data_quality_issue_count: int = 0
     thesis_generated: bool = False
     analysis_engine: str = "fundforge-analysis-engine"
+    evaluation_status: str | None = None    # pass | fail（未运行评估时为 None）
+    repair_applied: bool = False
 
 
 class Report(BaseModel):
@@ -55,8 +57,18 @@ class Report(BaseModel):
 def render_markdown(report: Report) -> str:
     """Report → Markdown（纯模板渲染，确定性）。"""
     lines = [f"# {report.title}", ""]
+    header_meta = [
+        f"生成时间：{report.generated_at:%Y-%m-%d %H:%M}（request_id: {report.request_id}）"
+    ]
+    evaluation_bits = []
+    if report.metadata.evaluation_status:
+        evaluation_bits.append(f"评估：{report.metadata.evaluation_status}")
+    if report.metadata.repair_applied:
+        evaluation_bits.append("已执行修复")
+    if evaluation_bits:
+        header_meta.append(" | ".join(evaluation_bits))
     lines += [
-        f"生成时间：{report.generated_at:%Y-%m-%d %H:%M}（request_id: {report.request_id}）",
+        *header_meta,
         "",
         "## 摘要",
         report.executive_summary,

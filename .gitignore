@@ -23,3 +23,6 @@ __pycache__/
 *.log
 # Pytest cache
 .pytest_cache/
+
+# local debug captures
+/agent/log

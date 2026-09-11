@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from domain.fund import DataQuality
+from domain.shared import DataQuality
 
 
 class EvidenceType(StrEnum):
@@ -31,7 +31,7 @@ class Evidence(BaseModel):
     source_detail: str | None = None
     as_of: datetime | None = None
     value: str | float | dict | list | None = None
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
     confidence: float = 1.0
     raw_ref: str | None = None      # 指向外部 Store 中的完整原始数据
 

@@ -59,11 +59,19 @@ class FakeLLMProvider:
 
 
 class DynamicThesisProvider:
-    """从 prompt 上下文读取真实 evidence id，动态构造合法 Thesis（graph 级测试用）。"""
+    """从 prompt 上下文读取真实 evidence id，动态构造合法 Thesis（graph 级测试用）。
+
+    cite="first" 只引用第一条证据（正常路径）；
+    cite="all" 引用全部证据（含 missing 质量，用于触发 Evaluator FAIL）。
+    """
+
+    def __init__(self, cite: str = "first") -> None:
+        self._cite = cite
 
     def generate(self, messages, *, structured_output=None) -> LLMResponse:
         context = json.loads(messages[1].content.split("：\n", 1)[1])
         ev_ids = [e["id"] for e in context["evidence"]]
+        cited = ev_ids if self._cite == "all" else ev_ids[:1]
         thesis = InvestmentThesis(
             summary="概要",
             claims=[
@@ -71,12 +79,13 @@ class DynamicThesisProvider:
                     id="c1",
                     statement="基于采集证据的结论",
                     claim_type="performance",
-                    evidence_ids=ev_ids[:1],
+                    evidence_ids=cited,
                     strength="moderate",
                 )
             ],
             suitability="适合长期持有（示例）",
             confidence=0.5,
+            risks=["历史业绩不代表未来表现"],
         )
         return LLMResponse(content=thesis.model_dump_json())
 
@@ -183,10 +192,14 @@ class TestThesisInGraph:
         try:
             graph = build_graph(client=client, llm=None)
             result = graph.invoke({"request_id": "t4", "user_query": f"分析基金 {FUND_CODE}"})
-            assert "investment_thesis" not in result
+            # 无 LLM：thesis 缺失 → evaluator FAIL → repair（无动作）→ 强制 synthesizer
+            assert result.get("investment_thesis") is None
+            assert result.get("iteration") == 1  # 修复循环恰好执行 1 次，不无限循环
             assert any("LLM 未配置" in i for i in result.get("data_quality_issues", []))
             report = result["report"]
             assert report.investment_thesis is None
+            assert report.metadata.evaluation_status == "fail"
+            assert report.metadata.repair_applied is True
             assert "免责声明" in render_markdown(report)
         finally:
             client.close()

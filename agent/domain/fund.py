@@ -5,11 +5,10 @@ data_quality 与 as_of，用于数据质量传递与披露。
 """
 
 from datetime import date, datetime
-from typing import Literal
 
 from pydantic import BaseModel
 
-DataQuality = Literal["complete", "partial", "stale", "missing"]
+from domain.shared import DataQuality
 
 
 class NAVPoint(BaseModel):
@@ -37,7 +36,7 @@ class Fund(BaseModel):
     currency: str = "CNY"
     source: str
     as_of: datetime
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 class FundSummary(BaseModel):
@@ -50,7 +49,7 @@ class FundSummary(BaseModel):
     aum: float | None = None
     manager_name: str | None = None
     as_of: datetime
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 class FundPerformance(BaseModel):
@@ -73,7 +72,7 @@ class FundPerformance(BaseModel):
     benchmark_return: float | None = None
     source: str
     as_of: datetime
-    data_quality: DataQuality = "complete"
+    data_quality: DataQuality = DataQuality.COMPLETE
 
 
 def summarize_fund(fund: Fund) -> FundSummary:
@@ -94,14 +93,13 @@ def quality_of(*fields: object) -> DataQuality:
     """根据关键字段缺失情况推导 data_quality：全缺 missing，部分缺 partial，否则 complete。"""
     present = [f is not None for f in fields]
     if not any(present):
-        return "missing"
+        return DataQuality.MISSING
     if not all(present):
-        return "partial"
-    return "complete"
+        return DataQuality.PARTIAL
+    return DataQuality.COMPLETE
 
 
 __all__ = [
-    "DataQuality",
     "NAVPoint",
     "Fund",
     "FundSummary",

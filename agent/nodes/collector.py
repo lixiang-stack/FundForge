@@ -18,6 +18,7 @@ from typing import Any
 from domain.evidence import Evidence, EvidenceType, ToolCallRecord
 from domain.fund import Fund, FundPerformance, FundSummary, summarize_fund
 from domain.plan import ResearchPlan
+from domain.shared import DataQuality
 from langchain_core.tools import BaseTool
 from state import FundForgeState
 from store import FundStore
@@ -175,7 +176,7 @@ class CollectorNode:
             result.issues.append(f"{code}: 基金基本信息缺失（get_fund_info 失败）")
         if not perf_record.success:
             result.issues.append(f"{code}: 基金净值序列缺失（get_fund_performance 失败）")
-        elif perf is not None and perf.data_quality == "missing":
+        elif perf is not None and perf.data_quality == DataQuality.MISSING:
             result.issues.append(f"{code}: 净值序列为空，data_quality=missing")
 
         if fund is not None:
