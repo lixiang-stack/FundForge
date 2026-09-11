@@ -5,6 +5,7 @@ from nodes.collector import CollectorNode
 from nodes.planner import extract_fund_codes, planner
 from nodes.router import router
 from nodes.synthesizer import synthesizer
+from nodes.thesis import ThesisNode
 
 __all__ = [
     "router",
@@ -12,5 +13,6 @@ __all__ = [
     "extract_fund_codes",
     "CollectorNode",
     "AnalyzerNode",
+    "ThesisNode",
     "synthesizer",
 ]

@@ -2,23 +2,36 @@
 
 合同见 docs/TechnicalContract.md §8 / §12。
 - Evidence 只允许追加，不允许修改历史记录（State Rules §2.5）。
-- 每个 Claim 必须绑定 evidence_ids（Claim 模型在 Phase 3 定义）。
+- 每个 Claim 必须绑定 evidence_ids（Claim 模型在 domain/thesis.py）。
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel
+
+from domain.fund import DataQuality
+
+
+class EvidenceType(StrEnum):
+    """证据类型（§8），Evalutor 按此分支检查证据覆盖。"""
+
+    FUND_DATA = "fund_data"
+    MARKET_DATA = "market_data"
+    CALCULATION = "calculation"
+    RESEARCH = "research"
+    MANAGER = "manager"
 
 
 class Evidence(BaseModel):
     id: str
-    evidence_type: Literal["fund_data", "market_data", "calculation", "research", "manager"]
+    evidence_type: EvidenceType
     source: str
     source_detail: str | None = None
     as_of: datetime | None = None
     value: str | float | dict | list | None = None
-    data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
+    data_quality: DataQuality = "complete"
     confidence: float = 1.0
     raw_ref: str | None = None      # 指向外部 Store 中的完整原始数据
 
@@ -34,4 +47,4 @@ class ToolCallRecord(BaseModel):
     error: str | None = None
 
 
-__all__ = ["Evidence", "ToolCallRecord"]
+__all__ = ["Evidence", "EvidenceType", "ToolCallRecord"]

@@ -25,7 +25,9 @@ uv --directory agent run pytest    # agent unit tests (mocked collector, no serv
 docker compose up -d               # full stack: postgres :5432, collector :8000, server :8080
 ```
 
-Local dev against containers: `docker compose up -d postgres collector`, then export `DATABASE_URL=postgres://fundforge:fundforge_dev_password@localhost:5432/fundforge?sslmode=disable` and `COLLECTOR_BASE_URL=http://localhost:8000`. The `.env` file uses container hostnames (`postgres`, `collector`) — only valid inside containers, not for host-run binaries.
+Local dev against containers: `docker compose up -d postgres collector`, then export `DATABASE_URL=postgres://fundforge:fundforge_dev_password@localhost:5432/fundforge?sslmode=disable` and `COLLECTOR_BASE_URL=http://localhost:8000`. The `.env` file uses container hostnames (`postgres`, `collector`) — only valid inside containers, not for host-run binaries (sourcing it on the host breaks collector access; override `COLLECTOR_BASE_URL` after sourcing).
+
+Agent LLM (thesis node): `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` (OpenAI-compatible chat/completions, e.g. DeepSeek). Unconfigured → thesis node degrades gracefully (no thesis, issue recorded).
 
 ## Migrations
 

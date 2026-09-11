@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from domain.evidence import Evidence, ToolCallRecord
+from domain.evidence import Evidence, EvidenceType, ToolCallRecord
 from domain.fund import Fund, FundPerformance, FundSummary, summarize_fund
 from domain.plan import ResearchPlan
 from langchain_core.tools import BaseTool
@@ -68,7 +68,7 @@ def fund_evidence(fund: Fund) -> Evidence:
     """基金基本信息 → fund_data 类型 Evidence。"""
     return Evidence(
         id=f"ev-{uuid.uuid4().hex[:12]}",
-        evidence_type="fund_data",
+        evidence_type=EvidenceType.FUND_DATA,
         source=fund.source,
         source_detail=f"基金基本信息：{fund.name or fund.id}",
         as_of=fund.as_of,
@@ -89,7 +89,7 @@ def performance_evidence(perf: FundPerformance) -> Evidence:
     """净值序列摘要 → fund_data 类型 Evidence。"""
     return Evidence(
         id=f"ev-{uuid.uuid4().hex[:12]}",
-        evidence_type="fund_data",
+        evidence_type=EvidenceType.FUND_DATA,
         source=perf.source,
         source_detail=f"净值序列：{perf.nav_point_count} 个数据点",
         as_of=perf.as_of,

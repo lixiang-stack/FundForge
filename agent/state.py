@@ -16,6 +16,7 @@ from domain.evidence import Evidence, ToolCallRecord
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.task_type import TaskType
+from domain.thesis import Claim, InvestmentThesis
 
 
 class FundForgeState(TypedDict, total=False):
@@ -36,6 +37,10 @@ class FundForgeState(TypedDict, total=False):
 
     # === Analyzer 产出 ===
     analysis: AnalysisResult
+
+    # === Thesis 产出 ===
+    claims: list[Claim]
+    investment_thesis: InvestmentThesis
 
     # === Output ===
     report: str

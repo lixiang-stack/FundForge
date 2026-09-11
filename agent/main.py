@@ -50,6 +50,12 @@ def main() -> None:
     print("=== tool_calls ===")
     for t in result.get("tool_calls", []):
         print(t.model_dump_json())
+    print()
+    print("=== investment_thesis ===")
+    if result.get("investment_thesis") is not None:
+        print(result["investment_thesis"].model_dump_json(indent=2))
+    else:
+        print("null（见数据质量提示）")
 
 
 if __name__ == "__main__":

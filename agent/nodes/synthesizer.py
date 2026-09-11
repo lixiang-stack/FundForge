@@ -8,6 +8,7 @@ import logging
 
 from domain.analysis import PeerMetricsRow
 from domain.plan import ResearchPlan
+from domain.thesis import InvestmentThesis
 from state import FundForgeState
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,33 @@ def _fmt_metric_row(row: PeerMetricsRow) -> str:
     )
 
 
+def _fmt_list(items: list[str], prefix: str) -> list[str]:
+    return [f"{prefix} {item}" for item in items] if items else []
+
+
+def _thesis_section(thesis: InvestmentThesis) -> list[str]:
+    """InvestmentThesis → 报告段落。"""
+    lines = [
+        "",
+        "投资论点（LLM 生成，基于 Evidence）：",
+        f"- 结论：{thesis.suitability}（证据充分度 {thesis.confidence:.2f}）",
+        f"- 概要：{thesis.summary}",
+        "- 关键结论：",
+    ]
+    for c in thesis.claims:
+        lines.append(f"  - [{c.strength}] {c.statement}（依据: {', '.join(c.evidence_ids)}）")
+    lines += _fmt_list(thesis.positives, "+")
+    lines += _fmt_list(thesis.negatives, "-")
+    lines += _fmt_list(thesis.risks, "! 风险:")
+    if thesis.key_assumptions:
+        lines.append("关键假设：")
+        lines.extend(f"  - {a}" for a in thesis.key_assumptions)
+    if thesis.data_gaps:
+        lines.append("数据缺口：")
+        lines.extend(f"  - {g}" for g in thesis.data_gaps)
+    return lines
+
+
 def synthesizer(state: FundForgeState) -> dict:
     summaries = state.get("funds_summary", [])
     evidence = state.get("evidence", [])
@@ -42,7 +70,7 @@ def synthesizer(state: FundForgeState) -> dict:
     notes = list(plan.notes) if plan else []
 
     lines = [
-        "FundForge 研究报告（Phase 2 骨架输出）",
+        "FundForge 研究报告（Phase 3 骨架输出）",
         "========================================",
         f"已采集基金：{len(summaries)} 只，证据条目：{len(evidence)} 条",
     ]
@@ -73,12 +101,15 @@ def synthesizer(state: FundForgeState) -> dict:
                 "横向对比仅供参考（后续版本将做区间对齐）。"
             )
 
+    thesis = state.get("investment_thesis")
+    if thesis is not None:
+        lines += _thesis_section(thesis)
+
     if issues:
         lines.append("数据质量提示：")
         lines.extend(f"- {i}" for i in issues)
     lines += [
         "",
-        "尚未接入 LLM 推理与评估环节。",
         _DISCLAIMER,
     ]
 
