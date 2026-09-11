@@ -4,9 +4,10 @@ Analysis Engine 的产出结构。portfolio 分析为 V1 Non-Goal，暂不建模
 """
 
 from datetime import date
-from typing import Literal
 
 from pydantic import BaseModel
+
+from domain.fund import DataQuality
 
 
 class PerformanceAnalysis(BaseModel):
@@ -18,7 +19,7 @@ class PerformanceAnalysis(BaseModel):
     nav_point_count: int = 0
     cumulative_return: float | None = None
     annualized_return: float | None = None
-    data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
+    data_quality: DataQuality = "complete"
 
 
 class RiskAnalysis(BaseModel):
@@ -28,7 +29,7 @@ class RiskAnalysis(BaseModel):
     annual_volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
-    data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
+    data_quality: DataQuality = "complete"
 
 
 class PeerMetricsRow(BaseModel):
@@ -59,7 +60,7 @@ class FundMetrics(BaseModel):
     annual_volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
-    data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
+    data_quality: DataQuality = "complete"
 
 
 class AnalysisResult(BaseModel):

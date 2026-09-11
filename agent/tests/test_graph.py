@@ -1,25 +1,32 @@
-"""Graph 级测试：条件边路由（无 fund_ids 时短路跳过 collector）。"""
+"""Graph 级测试：条件边路由 + Thesis 绑定（无 fund_ids 时短路跳过 collector）。"""
 
 from tests.conftest import FUND_CODE, make_transport
+from tests.test_thesis import DynamicThesisProvider
 from graph import build_graph
 from tools.collector_client import CollectorClient
 
 
-def _build():
+def _build(llm=None):
     client = CollectorClient(
         base_url="http://collector.test", transport=make_transport()
     )
-    return build_graph(client=client), client
+    return build_graph(client=client, llm=llm), client
 
 
 class TestConditionalRouting:
     def test_full_flow_with_fund_code(self):
-        graph, client = _build()
+        graph, client = _build(llm=DynamicThesisProvider())
         try:
             result = graph.invoke({"request_id": "t1", "user_query": f"分析基金 {FUND_CODE}"})
             assert result["funds_summary"][0].id == FUND_CODE
             assert result.get("tool_calls", []) != []
             assert result.get("data_quality_issues", []) == []
+            # Thesis 生成且 Claim 绑定真实 Evidence
+            thesis = result.get("investment_thesis")
+            assert thesis is not None
+            valid_ids = {e.id for e in result["evidence"]}
+            for c in thesis.claims:
+                assert set(c.evidence_ids) <= valid_ids
         finally:
             client.close()
 

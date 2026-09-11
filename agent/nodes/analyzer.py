@@ -19,7 +19,7 @@ from domain.analysis import (
     PerformanceAnalysis,
     RiskAnalysis,
 )
-from domain.evidence import Evidence
+from domain.evidence import Evidence, EvidenceType
 from domain.plan import ResearchPlan
 from state import FundForgeState
 from store import FundStore
@@ -125,7 +125,7 @@ class AnalyzerNode:
             evidences.append(
                 Evidence(
                     id=f"ev-{uuid.uuid4().hex[:12]}",
-                    evidence_type="calculation",
+                    evidence_type=EvidenceType.CALCULATION,
                     source=_ANALYSIS_SOURCE,
                     source_detail="确定性量化计算（Analysis Engine，无 LLM）",
                     as_of=datetime.now(),
