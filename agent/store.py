@@ -4,7 +4,7 @@ State 合同（§2 State Rules 1）：State 只保存跨 Node 共享的摘要与
 完整数据按需存放于外部 Store。raw_ref 形如 "store:funds/{code}"。
 """
 
-from domain.fund import Fund, NAVPoint
+from domain.fund import Fund, Holding, NAVPoint
 
 
 class FundStore:
@@ -13,6 +13,7 @@ class FundStore:
     def __init__(self) -> None:
         self._funds: dict[str, Fund] = {}
         self._nav_series: dict[str, list[NAVPoint]] = {}
+        self._holdings: dict[str, list[Holding]] = {}
 
     # ---- Fund ----
 
@@ -30,6 +31,14 @@ class FundStore:
     def get_nav_series(self, code: str) -> list[NAVPoint]:
         return self._nav_series.get(code, [])
 
+    # ---- Holdings ----
+
+    def put_holdings(self, code: str, holdings: list[Holding]) -> None:
+        self._holdings[code] = holdings
+
+    def get_holdings(self, code: str) -> list[Holding]:
+        return self._holdings.get(code, [])
+
     # ---- raw_ref 约定 ----
 
     @staticmethod
@@ -39,6 +48,10 @@ class FundStore:
     @staticmethod
     def nav_ref(code: str) -> str:
         return f"store:nav/{code}"
+
+    @staticmethod
+    def holdings_ref(code: str) -> str:
+        return f"store:holdings/{code}"
 
 
 __all__ = ["FundStore"]

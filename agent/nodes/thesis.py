@@ -13,10 +13,11 @@ Trade-off / Risk Identification，不负责事实和关键计算（事实来自 
 import json
 import logging
 import uuid
+from typing import TypedDict
 
 from pydantic import ValidationError
 
-from domain.evidence import Evidence
+from domain.evidence import Evidence, TokenUsage
 from domain.thesis import Claim, ClaimType, InvestmentThesis, Strength
 from domain.shared import to_jsonable
 from llm.base import LLMError, LLMProvider, Message
@@ -72,13 +73,22 @@ def build_thesis_prompt(state: FundForgeState) -> list[Message]:
     return [Message("system", _SYSTEM_PROMPT), Message("user", user_prompt)]
 
 
+class ThesisOutput(TypedDict, total=False):
+    """Thesis 节点输出（§4：claims, investment_thesis；data_quality_issues 记录降级）。"""
+
+    claims: list[Claim]
+    investment_thesis: InvestmentThesis
+    data_quality_issues: list[str]
+    token_usage: TokenUsage
+
+
 class ThesisNode:
     """Thesis 节点：调用 LLM 生成投资论点，强制 Evidence 绑定。"""
 
     def __init__(self, llm: LLMProvider | None) -> None:
         self._llm = llm
 
-    def __call__(self, state: FundForgeState) -> dict:
+    def __call__(self, state: FundForgeState) -> ThesisOutput:
         if self._llm is None:
             return self._degrade(
                 state,
@@ -92,15 +102,23 @@ class ThesisNode:
         if not evidence:
             return self._degrade(state, "无可用 Evidence，跳过投资论点生成")
 
+        usage = self._current_usage(state)
         try:
             response = self._llm.generate(
                 build_thesis_prompt(state),
                 structured_output=InvestmentThesis,
             )
+            usage = usage.merged(
+                TokenUsage(
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    llm_calls=1,
+                )
+            )
             thesis = InvestmentThesis.model_validate_json(response.content)
         except (LLMError, ValidationError, ValueError) as e:
             logger.error("thesis generation failed: %s", e)
-            return self._degrade(state, f"投资论点生成失败：{e}")
+            return self._degrade(state, f"投资论点生成失败：{e}", token_usage=usage)
 
         valid_ids = {e.id for e in evidence}
         valid_claims: list[Claim] = []
@@ -132,22 +150,39 @@ class ThesisNode:
             len(thesis.claims) + len(issues),
             thesis.confidence,
         )
-        return {
-            "claims": list(thesis.claims),
-            "investment_thesis": thesis,
-            "data_quality_issues": all_issues,
-        }
+        return ThesisOutput(
+            claims=list(thesis.claims),
+            investment_thesis=thesis,
+            data_quality_issues=all_issues,
+            token_usage=usage,
+        )
 
-    def _degrade(self, state: FundForgeState, reason: str, extra_issues: list[str] | None = None) -> dict:
+    def _degrade(
+        self,
+        state: FundForgeState,
+        reason: str,
+        extra_issues: list[str] | None = None,
+        token_usage: TokenUsage | None = None,
+    ) -> ThesisOutput:
         """Thesis 失败时降级：不产出论点，记录 issue，不中断工作流。"""
         logger.warning("thesis degraded: %s", reason)
-        return {
-            "data_quality_issues": [
+        output = ThesisOutput(
+            data_quality_issues=[
                 *state.get("data_quality_issues", []),
                 *(extra_issues or []),
                 reason,
-            ],
-        }
+            ]
+        )
+        if token_usage is not None:
+            output["token_usage"] = token_usage
+        return output
+
+    @staticmethod
+    def _current_usage(state: FundForgeState) -> TokenUsage:
+        raw = state.get("token_usage")
+        if raw is None or isinstance(raw, TokenUsage):
+            return raw or TokenUsage()
+        return TokenUsage.model_validate(raw)
 
 
 __all__ = ["ThesisNode", "build_thesis_prompt"]

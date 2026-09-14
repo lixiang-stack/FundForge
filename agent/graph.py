@@ -20,11 +20,12 @@ from nodes import (
     AnalyzerNode,
     CollectorNode,
     EvaluatorNode,
+    PlannerNode,
     RepairNode,
+    ResearcherNode,
+    RouterNode,
+    SynthesizerNode,
     ThesisNode,
-    planner,
-    router,
-    synthesizer,
 )
 from state import FundForgeState
 from store import FundStore
@@ -69,20 +70,22 @@ def build_graph(
 
     graph = StateGraph(FundForgeState)
 
-    graph.add_node("router", router)
-    graph.add_node("planner", planner)
+    graph.add_node("router", RouterNode())
+    graph.add_node("planner", PlannerNode())
     graph.add_node("collector", CollectorNode(tools))
     graph.add_node("analyzer", AnalyzerNode(store))
+    graph.add_node("researcher", ResearcherNode())
     graph.add_node("thesis", ThesisNode(llm))
     graph.add_node("evaluator", EvaluatorNode())
     graph.add_node("repair", RepairNode())
-    graph.add_node("synthesizer", synthesizer)
+    graph.add_node("synthesizer", SynthesizerNode())
 
     graph.add_edge(START, "router")
     graph.add_edge("router", "planner")
     graph.add_conditional_edges("planner", _route_after_plan, ["collector", "synthesizer"])
     graph.add_edge("collector", "analyzer")
-    graph.add_edge("analyzer", "thesis")
+    graph.add_edge("analyzer", "researcher")
+    graph.add_edge("researcher", "thesis")
     graph.add_edge("thesis", "evaluator")
     graph.add_conditional_edges(
         "evaluator", _route_after_evaluation, ["repair", "synthesizer"]

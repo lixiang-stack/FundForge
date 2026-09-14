@@ -13,7 +13,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from domain.evidence import Evidence, EvidenceType, ToolCallRecord
 from domain.fund import Fund, FundPerformance, FundSummary, summarize_fund
@@ -23,8 +23,11 @@ from langchain_core.tools import BaseTool
 from state import FundForgeState
 from store import FundStore
 from tools.fund_tools import FundTools
+from tools.collector_client import FUND_HOLDINGS_PATH, collector_source
 
 logger = logging.getLogger(__name__)
+
+_FUND_HOLDINGS_SOURCE = collector_source(FUND_HOLDINGS_PATH)
 
 
 @dataclass
@@ -105,13 +108,49 @@ def performance_evidence(perf: FundPerformance) -> Evidence:
     )
 
 
+def holdings_evidence(code: str, holdings: list, failed: bool) -> Evidence:
+    """股票持仓 → fund_data 类型 Evidence（空持仓属正常披露，仅质量降级）。
+
+    value 携带前 5 大持仓摘要，供 Thesis 提示词直接引用；完整数据在 Store。
+    """
+    top = [
+        {"stock_name": h.stock_name, "hold_ratio": h.hold_ratio}
+        for h in holdings[:5]
+    ]
+    quality = (
+        DataQuality.MISSING
+        if failed or not holdings
+        else DataQuality.COMPLETE
+    )
+    return Evidence(
+        id=f"ev-{uuid.uuid4().hex[:12]}",
+        evidence_type=EvidenceType.FUND_DATA,
+        source=_FUND_HOLDINGS_SOURCE.format(code=code),
+        source_detail=f"股票持仓：{len(holdings)} 条",
+        as_of=datetime.now(),
+        value={"fund_id": code, "holding_count": len(holdings), "top_holdings": top, "failed": failed},
+        data_quality=quality,
+        raw_ref=FundStore.holdings_ref(code),
+    )
+
+
+class CollectorOutput(TypedDict, total=False):
+    """Collector 节点输出（§4：fund_ids, funds_summary, evidence, tool_calls, data_quality_issues）。"""
+
+    fund_ids: list[str]
+    funds_summary: list[FundSummary]
+    evidence: list[Evidence]
+    tool_calls: list[ToolCallRecord]
+    data_quality_issues: list[str]
+
+
 class CollectorNode:
     """Collector 节点：调用 Fund Tools 采集数据，统一合并进 State。"""
 
     def __init__(self, tools: FundTools) -> None:
         self._tools = tools
 
-    def __call__(self, state: FundForgeState) -> dict:
+    def __call__(self, state: FundForgeState) -> CollectorOutput:
         plan = ResearchPlan.from_state(state.get("research_plan"))
         fund_ids = list(plan.fund_ids) if plan else []
         if not fund_ids:
@@ -152,7 +191,7 @@ class CollectorNode:
         return collected
 
     def _collect_fund(self, code: str) -> FundCollectionResult:
-        """采集单只基金：info + performance，失败降级并记录问题。"""
+        """采集单只基金：info + performance + holdings，失败降级并记录问题。"""
         result = FundCollectionResult(fund_id=code)
 
         fund, info_record = record_tool_call(
@@ -164,6 +203,11 @@ class CollectorNode:
             self._tools.get_fund_performance, {"fund_id": code}
         )
         result.tool_calls.append(perf_record)
+
+        holdings, holdings_record = record_tool_call(
+            self._tools.get_fund_holdings, {"fund_id": code}
+        )
+        result.tool_calls.append(holdings_record)
 
         if not info_record.success and not perf_record.success:
             result.issues.append(f"{code}: 基金数据获取完全失败")
@@ -179,11 +223,25 @@ class CollectorNode:
         elif perf is not None and perf.data_quality == DataQuality.MISSING:
             result.issues.append(f"{code}: 净值序列为空，data_quality=missing")
 
+        # 持仓：失败记录 issue；空持仓对债基/货基属正常披露，仅记 missing 质量证据
+        holdings_failure = holdings_record.success and not holdings
+        if not holdings_record.success:
+            result.issues.append(f"{code}: 股票持仓获取失败（get_fund_holdings 失败）")
+        elif holdings_failure:
+            logger.info("holdings: %s 无股票持仓披露（非股票型基金属正常）", code)
+
         if fund is not None:
             result.summary = summarize_fund(fund)
             result.evidence.append(fund_evidence(fund))
         if perf is not None:
             result.evidence.append(performance_evidence(perf))
+        result.evidence.append(
+            holdings_evidence(
+                code,
+                holdings if holdings_record.success else [],
+                failed=not holdings_record.success,
+            )
+        )
         return result
 
 

@@ -2,7 +2,9 @@
 
 from tests.conftest import FUND_CODE, make_tools
 from nodes.collector import CollectorNode
-from nodes.planner import extract_fund_codes, planner
+from nodes.planner import PlannerNode, extract_fund_codes
+from nodes.router import RouterNode
+from domain.task_type import TaskType
 
 
 class TestPlanner:
@@ -16,7 +18,7 @@ class TestPlanner:
         assert extract_fund_codes("基金代码 5197701 或 12345 都无效") == []
 
     def test_no_code_yields_empty_plan_with_note(self):
-        result = planner({"user_query": "帮我推荐基金"})
+        result = PlannerNode()({"user_query": "帮我推荐基金"})
         plan = result["research_plan"]
         assert plan.fund_ids == []
         assert plan.primary_fund_id is None
@@ -25,10 +27,54 @@ class TestPlanner:
 
 class TestPlannerPrimary:
     def test_first_code_is_primary(self):
-        result = planner({"user_query": "对比 000001 和 519770"})
+        result = PlannerNode()({"user_query": "对比 000001 和 519770"})
         plan = result["research_plan"]
         assert plan.fund_ids == ["000001", "519770"]
         assert plan.primary_fund_id == "000001"
+
+
+class TestRouterClassification:
+    def test_pure_comparison_intent(self):
+        out = RouterNode()({"user_query": "000001 和 519770 哪个好"})
+        assert out["task_type"] == TaskType.FUND_COMPARISON
+
+    def test_analysis_intent_with_comparison_is_research(self):
+        # 「分析A并与B比较」= 带 peer 的 fund_research（V1 核心 Case）
+        out = RouterNode()({"user_query": "分析基金 519770 是否适合长期持有，并与 000001 比较"})
+        assert out["task_type"] == TaskType.FUND_RESEARCH
+
+    def test_plain_analysis_intent(self):
+        out = RouterNode()({"user_query": "分析基金 519770"})
+        assert out["task_type"] == TaskType.FUND_RESEARCH
+
+
+class TestPlannerTaskType:
+    def test_comparison_task_with_two_codes(self):
+        state = {"user_query": "000001 和 519770 哪个好", "task_type": TaskType.FUND_COMPARISON}
+        out = PlannerNode()(state)
+        assert out["task_type"] == TaskType.FUND_COMPARISON
+        plan = out["research_plan"]
+        assert plan.task_type == TaskType.FUND_COMPARISON
+        assert plan.primary_fund_id == "000001"
+        assert plan.peer_fund_ids == ["519770"]
+        assert out["peer_fund_ids"] == ["519770"]
+
+    def test_comparison_downgraded_when_single_code(self):
+        state = {"user_query": "对比 519770", "task_type": TaskType.FUND_COMPARISON}
+        out = PlannerNode()(state)
+        assert out["task_type"] == TaskType.FUND_RESEARCH
+        plan = out["research_plan"]
+        assert plan.task_type == TaskType.FUND_RESEARCH
+        assert plan.peer_fund_ids == []
+        assert any("不足 2 只" in n for n in plan.notes)
+
+    def test_research_with_peers_records_note(self):
+        out = PlannerNode()({"user_query": "分析基金 519770，并与 000001、005827 比较"})
+        assert out["task_type"] == TaskType.FUND_RESEARCH
+        plan = out["research_plan"]
+        assert plan.primary_fund_id == "519770"
+        assert plan.peer_fund_ids == ["000001", "005827"]
+        assert any("对比基金" in n for n in plan.notes)
 
 
 class TestCollectorNode:
@@ -51,16 +97,20 @@ class TestCollectorNode:
             assert summary.id == FUND_CODE
             assert summary.name == "交银优择回报A"
 
-            # 至少 1 条 Evidence（info + performance 共 2 条）
-            assert len(out["evidence"]) == 2
+            # 至少 1 条 Evidence（info + performance + holdings 共 3 条）
+            assert len(out["evidence"]) == 3
             types = {e.evidence_type for e in out["evidence"]}
             assert types == {"fund_data"}
             assert all(e.raw_ref for e in out["evidence"])
 
-            # ToolCallRecord：info + performance 各一次，全部成功
-            assert len(out["tool_calls"]) == 2
+            # ToolCallRecord：info + performance + holdings 各一次，全部成功
+            assert len(out["tool_calls"]) == 3
             assert all(t.success for t in out["tool_calls"])
-            assert {t.tool_name for t in out["tool_calls"]} == {"get_fund_info", "get_fund_performance"}
+            assert {t.tool_name for t in out["tool_calls"]} == {
+                "get_fund_info",
+                "get_fund_performance",
+                "get_fund_holdings",
+            }
 
             # 完整数据写入外部 Store
             assert store.get_fund(FUND_CODE) is not None
@@ -92,7 +142,7 @@ class TestCollectorNode:
             }
             out = node(state)
             assert out["funds_summary"] == []
-            assert len(out["tool_calls"]) == 2
+            assert len(out["tool_calls"]) == 3
             assert all(not t.success for t in out["tool_calls"])
             assert all(t.error for t in out["tool_calls"])
             assert any("完全失败" in i for i in out["data_quality_issues"])

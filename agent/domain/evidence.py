@@ -47,4 +47,25 @@ class ToolCallRecord(BaseModel):
     error: str | None = None
 
 
-__all__ = ["Evidence", "EvidenceType", "ToolCallRecord"]
+class TokenUsage(BaseModel):
+    """LLM 用量统计（可观测性合同 §12）。
+
+    estimated_cost 因各家模型费率不同，V1 恒为 0（Phase 7 Cost Governor 接入）。
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    llm_calls: int = 0
+    estimated_cost: float = 0.0
+
+    def merged(self, other: "TokenUsage") -> "TokenUsage":
+        """合并两份用量（append 语义）。"""
+        return TokenUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            llm_calls=self.llm_calls + other.llm_calls,
+            estimated_cost=self.estimated_cost + other.estimated_cost,
+        )
+
+
+__all__ = ["Evidence", "EvidenceType", "ToolCallRecord", "TokenUsage"]

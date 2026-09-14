@@ -20,6 +20,7 @@ from domain.fund import (
     Fund,
     FundPerformance,
     FundSummary,
+    Holding,
     NAVPoint,
     quality_of,
 )
@@ -28,6 +29,7 @@ from tools.collector_client import (
     CollectorClient,
     CollectorError,
     FUND_DETAIL_PATH,
+    FUND_HOLDINGS_PATH,
     FUND_NAV_PATH,
     collector_source,
 )
@@ -36,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 _FUND_DETAIL_SOURCE = collector_source(FUND_DETAIL_PATH)
 _FUND_NAV_SOURCE = collector_source(FUND_NAV_PATH)
+_FUND_HOLDINGS_SOURCE = collector_source(FUND_HOLDINGS_PATH)
 
 
 @dataclass
@@ -44,6 +47,7 @@ class FundTools:
 
     get_fund_info: BaseTool
     get_fund_performance: BaseTool
+    get_fund_holdings: BaseTool
     search_funds: BaseTool
 
 
@@ -164,6 +168,27 @@ def make_fund_tools(client: CollectorClient, store: FundStore) -> FundTools:
         return performance
 
     @tool
+    def get_fund_holdings(fund_id: str, year: str | None = None) -> list[Holding]:
+        """获取基金股票持仓（前十大重仓等披露数据），只返回事实。
+
+        空持仓对债券型/货币型基金属正常披露，不算数据质量问题。
+        """
+        rows = client.get_fund_holdings(fund_id, year=year)
+        holdings = [
+            Holding(
+                stock_code=str(r.get("stock_code", "")),
+                stock_name=str(r.get("stock_name", "")),
+                hold_ratio=r.get("hold_ratio"),
+                report_date=_optional_str(r.get("report_date")),
+            )
+            for r in rows
+            if r.get("stock_code")
+        ]
+        store.put_holdings(fund_id, holdings)
+        logger.info("get_fund_holdings: %s -> %d rows", fund_id, len(holdings))
+        return holdings
+
+    @tool
     def search_funds(query: str, limit: int = 10) -> list[FundSummary]:
         """按基金代码 / 名称 / 拼音缩写模糊搜索基金（简单版）。"""
         rows = client.list_funds()
@@ -194,6 +219,7 @@ def make_fund_tools(client: CollectorClient, store: FundStore) -> FundTools:
     return FundTools(
         get_fund_info=get_fund_info,
         get_fund_performance=get_fund_performance,
+        get_fund_holdings=get_fund_holdings,
         search_funds=search_funds,
     )
 

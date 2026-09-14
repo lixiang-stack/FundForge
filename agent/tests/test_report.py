@@ -2,7 +2,7 @@
 
 from domain.thesis import Claim
 from domain.report import render_markdown
-from nodes.synthesizer import synthesizer
+from nodes.synthesizer import SynthesizerNode
 from tests.test_thesis import EV1, _thesis
 
 
@@ -60,7 +60,7 @@ class TestReportStructure:
             data_gaps=["缺少同类对比"],
         )
         state = _base_state(investment_thesis=thesis.model_dump(mode="json"))
-        report = synthesizer(state)["report"]
+        report = SynthesizerNode()(state)["report"]
 
         # §11 关键字段
         assert report.title.startswith("FundForge 基金研究报告")
@@ -86,7 +86,7 @@ class TestReportStructure:
         assert report.metadata.thesis_generated is True
 
     def test_degraded_report_without_thesis(self):
-        report = synthesizer(_base_state())["report"]
+        report = SynthesizerNode()(_base_state())["report"]
 
         assert report.investment_thesis is None
         assert report.key_claims == []
@@ -94,7 +94,7 @@ class TestReportStructure:
         assert any("不构成任何投资建议" in r for r in report.risks_and_disclaimers)
 
     def test_empty_state_report_has_guidance(self):
-        report = synthesizer({"request_id": "r", "user_query": "帮我推荐基金"})["report"]
+        report = SynthesizerNode()({"request_id": "r", "user_query": "帮我推荐基金"})["report"]
 
         assert "未能采集到基金数据" in report.executive_summary
         assert any("6 位基金代码" in g for g in report.data_gaps_and_limitations)
@@ -104,7 +104,7 @@ class TestReportStructure:
         thesis = _thesis(
             [Claim(id="c1", statement="s", claim_type="peer", evidence_ids=[EV1], strength="weak")]
         )
-        report = synthesizer(_base_state(investment_thesis=thesis.model_dump(mode="json")))["report"]
+        report = SynthesizerNode()(_base_state(investment_thesis=thesis.model_dump(mode="json")))["report"]
         assert report.key_claims[0].claim_type == "peer"
 
 
@@ -113,7 +113,7 @@ class TestMarkdownRendering:
         thesis = _thesis(
             [Claim(id="c1", statement="长期业绩为正", claim_type="performance", evidence_ids=[EV1], strength="strong")]
         )
-        report = synthesizer(_base_state(investment_thesis=thesis.model_dump(mode="json")))["report"]
+        report = SynthesizerNode()(_base_state(investment_thesis=thesis.model_dump(mode="json")))["report"]
         md = render_markdown(report)
 
         for section in ["# FundForge 基金研究报告", "## 摘要", "## 基金概览", "## 业绩分析",

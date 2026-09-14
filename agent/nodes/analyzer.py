@@ -8,6 +8,7 @@
 
 import logging
 import uuid
+from typing import TypedDict
 from datetime import datetime
 
 from analysis import compute_fund_metrics
@@ -29,13 +30,21 @@ logger = logging.getLogger(__name__)
 _ANALYSIS_SOURCE = "fundforge:analysis-engine"
 
 
+class AnalyzerOutput(TypedDict, total=False):
+    """Analyzer 节点输出（§4：analysis, evidence）。"""
+
+    analysis: AnalysisResult
+    evidence: list[Evidence]
+    data_quality_issues: list[str]
+
+
 class AnalyzerNode:
     """Analyzer 节点：读取 Store 数据 → 纯函数计算 → 结构化结果与 Evidence。"""
 
     def __init__(self, store: FundStore) -> None:
         self._store = store
 
-    def __call__(self, state: FundForgeState) -> dict:
+    def __call__(self, state: FundForgeState) -> AnalyzerOutput:
         plan = ResearchPlan.from_state(state.get("research_plan"))
         fund_ids = list(state.get("fund_ids", [])) or (list(plan.fund_ids) if plan else [])
         if not fund_ids:
@@ -147,4 +156,4 @@ class AnalyzerNode:
         return evidences
 
 
-__all__ = ["AnalyzerNode"]
+__all__ = ["AnalyzerNode", "AnalyzerOutput"]

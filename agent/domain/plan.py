@@ -13,6 +13,7 @@ class ResearchPlan(BaseModel):
     task_type: TaskType = TaskType.FUND_RESEARCH
     primary_fund_id: str | None = None   # 主基金（分析主体）；None 时下游默认取 fund_ids[0]
     fund_ids: list[str] = Field(default_factory=list)
+    peer_fund_ids: list[str] = Field(default_factory=list)  # 对比基金（§2 State Contract）
     notes: list[str] = Field(default_factory=list)
 
     @classmethod

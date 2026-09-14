@@ -52,6 +52,28 @@ def main() -> None:
     for t in result.get("tool_calls", []):
         print(t.model_dump_json())
     print()
+    print("=== evaluation ===")
+    evaluation = result.get("evaluation")
+    if evaluation is not None:
+        print(f"status={evaluation.status} score={evaluation.overall_score} critical={evaluation.critical}")
+        for issue in evaluation.all_issues():
+            print(f"- {issue}")
+    print()
+    print("=== repair_actions ===")
+    for a in result.get("repair_actions", []):
+        print(f"- {a}")
+    print(f"iteration: {result.get('iteration', 0)}")
+    print()
+    print("=== token_usage ===")
+    usage = result.get("token_usage")
+    print(usage.model_dump_json() if usage is not None else "null")
+    print()
+    print("=== research_items ===")
+    items = result.get("research_items", [])
+    print(f"{len(items)} items")
+    for item in items:
+        print(f"- [{item.source}] {item.title}")
+    print()
     print("=== investment_thesis ===")
     if result.get("investment_thesis") is not None:
         print(result["investment_thesis"].model_dump_json(indent=2))

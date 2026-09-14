@@ -14,4 +14,9 @@ class TaskType(StrEnum):
     PORTFOLIO_ANALYSIS = "portfolio_analysis"
 
 
-__all__ = ["TaskType"]
+# 确定性意图分类关键词（Router 分类 / Evaluator 对齐检查共用）
+ANALYSIS_INTENT_KEYWORDS = ("分析", "研究", "适合", "持有", "值得", "评估")
+COMPARISON_INTENT_KEYWORDS = ("对比", "比较", "相比", "哪个好", "哪一个好", "更值得")
+
+
+__all__ = ["TaskType", "ANALYSIS_INTENT_KEYWORDS", "COMPARISON_INTENT_KEYWORDS"]

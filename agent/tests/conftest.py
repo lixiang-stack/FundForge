@@ -25,6 +25,11 @@ UNIT_ROWS = [
     {"nav_date": "2026-09-08", "unit_nav": 5.7559, "daily_return": -0.65},
 ]
 
+HOLDINGS_ROWS = [
+    {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 3.12, "report_date": "2025-06-30"},
+    {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": "2025-06-30"},
+]
+
 ACC_ROWS = [
     {"nav_date": "2016-04-22", "acc_nav": 1.0},
     {"nav_date": "2020-01-02", "acc_nav": 2.1},
@@ -52,6 +57,7 @@ def make_transport(
     unit_rows: list | None = None,
     acc_rows: list | None = None,
     fund_rows: list | None = None,
+    holdings_rows: list | None = None,
     status: int = 200,
 ) -> httpx.MockTransport:
     """按路径模拟 collector 响应；status 非 200 时统一返回错误。"""
@@ -67,6 +73,10 @@ def make_transport(
             if "累计" in indicator:
                 return httpx.Response(200, json=acc_rows if acc_rows is not None else ACC_ROWS)
             return httpx.Response(200, json=unit_rows if unit_rows is not None else UNIT_ROWS)
+        if path.endswith("/holdings/stock"):
+            return httpx.Response(
+                200, json=holdings_rows if holdings_rows is not None else HOLDINGS_ROWS
+            )
         if path == "/api/funds":
             return httpx.Response(200, json=fund_rows if fund_rows is not None else FUND_LIST_ROWS)
         return httpx.Response(404, json={"detail": "not found"})
@@ -79,12 +89,13 @@ def make_tools(
     unit_rows: list | None = None,
     acc_rows: list | None = None,
     fund_rows: list | None = None,
+    holdings_rows: list | None = None,
     status: int = 200,
 ):
     """构建 (tools, store, client) 三元组，client 使用 mock transport。"""
     client = CollectorClient(
         base_url="http://collector.test",
-        transport=make_transport(detail_rows, unit_rows, acc_rows, fund_rows, status),
+        transport=make_transport(detail_rows, unit_rows, acc_rows, fund_rows, holdings_rows, status),
     )
     store = FundStore()
     return make_fund_tools(client, store), store, client
