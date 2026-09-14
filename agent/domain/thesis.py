@@ -34,7 +34,10 @@ class Claim(BaseModel):
     id: str
     statement: str
     claim_type: ClaimType
-    evidence_ids: list[str] = Field(min_length=1)   # 强制：至少 1 个
+    # 模式层容忍空绑定（真实 LLM 输出可能缺失）；节点层强制：
+    # 空绑定/无效绑定的 Claim 在 ThesisNode 后处理中降级为 data_gaps 或丢弃，
+    # 进入 State 的 Claim 保证至少绑定 1 个真实存在的 evidence_id。
+    evidence_ids: list[str] = Field(default_factory=list)
     strength: Strength
     assumptions: list[str] = Field(default_factory=list)
 

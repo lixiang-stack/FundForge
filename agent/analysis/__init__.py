@@ -10,11 +10,13 @@ from analysis.engine import (
     compute_fund_metrics,
     cumulative_return,
     max_drawdown,
+    nav_value,
     sharpe_ratio,
     simple_returns,
 )
 
 __all__ = [
+    "nav_value",
     "simple_returns",
     "cumulative_return",
     "annualized_return",

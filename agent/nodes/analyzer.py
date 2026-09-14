@@ -9,9 +9,9 @@
 import logging
 import uuid
 from typing import TypedDict
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from analysis import compute_fund_metrics
+from analysis import compute_fund_metrics, nav_value
 from domain.analysis import (
     AnalysisResult,
     FundMetrics,
@@ -22,12 +22,36 @@ from domain.analysis import (
 )
 from domain.evidence import Evidence, EvidenceType
 from domain.plan import ResearchPlan
+from domain.shared import DataQuality
 from state import FundForgeState
 from store import FundStore
 
 logger = logging.getLogger(__name__)
 
 _ANALYSIS_SOURCE = "fundforge:analysis-engine"
+_ALIGNMENT_MAX_DAYS = 365 * 10   # 对齐窗口上限：10 年
+_MIN_ALIGNMENT_DAYS = 30         # 低于该窗口的对比无统计意义
+
+
+def _aligned_window(series: dict[str, list]) -> tuple | None:
+    """多基金共同对齐区间：最晚起点 ~ 最早终点，最长 10 年。
+
+    无法对齐（任一基金有效点不足 / 共同区间过短）返回 None。
+    """
+    spans = []
+    for points in series.values():
+        valid = [p for p in points if nav_value(p) is not None]
+        if len(valid) >= 2:
+            spans.append((valid[0].nav_date, valid[-1].nav_date))
+    if len(spans) < 2:
+        return None
+    start = max(s for s, _ in spans)
+    end = min(e for _, e in spans)
+    if (end - start).days > _ALIGNMENT_MAX_DAYS:
+        start = end - timedelta(days=_ALIGNMENT_MAX_DAYS)
+    if (end - start).days < _MIN_ALIGNMENT_DAYS:
+        return None
+    return start, end
 
 
 class AnalyzerOutput(TypedDict, total=False):
@@ -57,30 +81,47 @@ class AnalyzerNode:
             logger.warning("analyzer: primary_fund_id=%s 不在采集列表中，回退首个", primary_id)
             primary_id = fund_ids[0]
 
-        metrics_by_fund = {
-            fund_id: compute_fund_metrics(self._store.get_nav_series(fund_id))
-            for fund_id in fund_ids
-        }
+        issues: list[str] = []
+        alignment: tuple | None = None
+        if len(fund_ids) > 1:
+            series = {fid: self._store.get_nav_series(fid) for fid in fund_ids}
+            alignment = _aligned_window(series)
+            if alignment is None:
+                issues.append(
+                    "多基金对比：共同对齐区间不足（<30 个自然日），peer 对比跳过，"
+                    "各基金指标按其自身全历史计算"
+                )
+
+        # 对比场景：全部基金按对齐区间重算（主基金指标与对比表口径一致）；
+        # 单基金：按其自身全历史计算
+        metrics_by_fund: dict[str, FundMetrics] = {}
+        for fid in fund_ids:
+            points = self._store.get_nav_series(fid)
+            if alignment is not None:
+                start, end = alignment
+                points = [p for p in points if start <= p.nav_date <= end]
+            metrics_by_fund[fid] = compute_fund_metrics(points)
 
         analysis = self._build_analysis(primary_id, fund_ids, metrics_by_fund)
-        evidence = self._build_evidence(fund_ids, metrics_by_fund)
-        issues = [
+        evidence = self._build_evidence(fund_ids, metrics_by_fund, alignment)
+        issues += [
             f"{fid}: 净值数据不足（{m.nav_point_count} 个有效点），指标不可信"
             for fid, m in metrics_by_fund.items()
-            if m.data_quality != "complete"
+            if m.data_quality != DataQuality.COMPLETE
         ]
 
         logger.info(
-            "analyzer: analyzed %d funds (primary=%s, quality=%s)",
+            "analyzer: analyzed %d funds (primary=%s, quality=%s, alignment=%s)",
             len(fund_ids),
             primary_id,
             analysis.performance.data_quality,
+            alignment,
         )
-        return {
-            "analysis": analysis,
-            "evidence": [*state.get("evidence", []), *evidence],
-            "data_quality_issues": [*state.get("data_quality_issues", []), *issues],
-        }
+        return AnalyzerOutput(
+            analysis=analysis,
+            evidence=[*state.get("evidence", []), *evidence],
+            data_quality_issues=[*state.get("data_quality_issues", []), *issues],
+        )
 
     def _build_analysis(
         self,
@@ -126,6 +167,7 @@ class AnalyzerNode:
         self,
         fund_ids: list[str],
         metrics_by_fund: dict[str, FundMetrics],
+        alignment: tuple | None = None,
     ) -> list[Evidence]:
         """每只基金一条 calculation 类型 Evidence（§9：计算结果写入 Evidence）。"""
         evidences = []
@@ -148,6 +190,7 @@ class AnalyzerNode:
                         "annual_volatility": m.annual_volatility,
                         "max_drawdown": m.max_drawdown,
                         "sharpe": m.sharpe,
+                        "alignment_window": [str(alignment[0]), str(alignment[1])] if alignment else None,
                     },
                     data_quality=m.data_quality,
                     raw_ref=FundStore.nav_ref(fid),

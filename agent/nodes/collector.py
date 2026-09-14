@@ -223,7 +223,14 @@ class CollectorNode:
         elif perf is not None and perf.data_quality == DataQuality.MISSING:
             result.issues.append(f"{code}: 净值序列为空，data_quality=missing")
 
-        # 持仓：失败记录 issue；空持仓对债基/货基属正常披露，仅记 missing 质量证据
+        # 业务正常为空 vs 数据源失败的区分：
+        # - holdings 为空：债基/货基正常披露 → 仅 missing 质量证据，不记 issue
+        # - detail 为空：真实基金必有基本信息，空返回 = 数据源异常 → 记 issue
+        # - nav 为空：真实基金必有净值历史，空序列 = 数据源异常 → 记 issue
+        detail_empty = info_record.success and fund is not None and not fund.name and not fund.fund_type
+        if detail_empty:
+            result.issues.append(f"{code}: 基金基本信息为空（数据源可能异常或代码不存在）")
+
         holdings_failure = holdings_record.success and not holdings
         if not holdings_record.success:
             result.issues.append(f"{code}: 股票持仓获取失败（get_fund_holdings 失败）")

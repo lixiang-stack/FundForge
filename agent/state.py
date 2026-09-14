@@ -18,7 +18,7 @@ from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report
 from domain.research import ResearchItem
-from domain.task_type import TaskType
+from domain.task_type import ClassificationRuleHit, TaskType
 from domain.thesis import Claim, InvestmentThesis
 from domain.evidence import TokenUsage
 
@@ -28,6 +28,8 @@ class FundForgeState(TypedDict, total=False):
     request_id: str
     user_query: str
     task_type: TaskType
+    classification_rule_hit: ClassificationRuleHit
+    classification_confidence: float
 
     # === Planning ===
     research_plan: ResearchPlan

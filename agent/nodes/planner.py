@@ -1,23 +1,22 @@
 """Planner 节点（Node 合同 §4）。
 
 职责：决定需要哪些数据，输出结构化 research_plan。约束：不直接执行 Tool。
-- 消费 Router 的 task_type 初始分类，做**数据可行性校验**：
-  对比意图但基金代码不足 2 只 → 降级 fund_research 并记录 note；
-- 提取 6 位基金代码（首个为主基金），其余为对比基金（peer_fund_ids）；
+- 消费 Router 的意图分类（task_type + rule_hit + confidence）；
+- 数据可行性校验：对比意图但基金代码不足 2 只 → 降级 fund_research 并记录 note；
+- 提取 6 位基金代码（首个为主基金），其余为对比基金（peer_fund_ids，§2）；
+- 分类规则命中与置信度透传进 research_plan（评测与对齐检查用）；
 - 不调用 LLM；名称→代码解析为 Phase 7+ 增强。
 """
 
 import logging
-import re
 from typing import TypedDict
 
 from domain.plan import ResearchPlan
-from domain.task_type import TaskType
+from domain.task_type import ClassificationRuleHit, TaskType
+from nodes.intent import classify, extract_fund_codes
 from state import FundForgeState
 
 logger = logging.getLogger(__name__)
-
-_FUND_CODE_RE = re.compile(r"\b(\d{6})\b")
 
 
 class PlannerOutput(TypedDict, total=False):
@@ -26,30 +25,27 @@ class PlannerOutput(TypedDict, total=False):
     peer_fund_ids: list[str]
 
 
-def extract_fund_codes(query: str) -> list[str]:
-    """从用户 query 中提取 6 位基金代码（去重、保序）。"""
-    seen: set[str] = set()
-    codes: list[str] = []
-    for m in _FUND_CODE_RE.finditer(query):
-        code = m.group(1)
-        if code not in seen:
-            seen.add(code)
-            codes.append(code)
-    return codes
-
-
 class PlannerNode:
     """Planner 节点：从 query 规划数据采集计划（含对比基金与可行性校验）。"""
 
     def __call__(self, state: FundForgeState) -> PlannerOutput:
         query = state.get("user_query", "")
-        task_type = self._initial_task_type(state)
-        fund_ids = extract_fund_codes(query)
+        classification = classify(query)
+        task_type = classification.task_type
+        fund_ids = classification.fund_ids
+        rule_hits = [classification.rule_hit]
+        confidence = classification.confidence
 
         if not fund_ids:
             note = "query 中未发现 6 位基金代码，无法规划数据采集"
             logger.warning("planner: %s", note)
-            plan = ResearchPlan(task_type=task_type, fund_ids=[], notes=[note])
+            plan = ResearchPlan(
+                task_type=task_type,
+                fund_ids=[],
+                notes=[note],
+                classification_rule_hits=rule_hits,
+                classification_confidence=confidence,
+            )
             return PlannerOutput(task_type=task_type, research_plan=plan)
 
         primary = fund_ids[0]
@@ -61,6 +57,8 @@ class PlannerNode:
             note = "query 含对比意图但基金代码不足 2 只，按单基金研究（fund_research）处理"
             notes.append(note)
             task_type = TaskType.FUND_RESEARCH
+            rule_hits.append(ClassificationRuleHit.FEASIBILITY_DOWNGRADE)
+            confidence = min(confidence, 0.5)
             logger.warning("planner: %s", note)
 
         if peers and task_type == TaskType.FUND_RESEARCH:
@@ -72,29 +70,22 @@ class PlannerNode:
             fund_ids=fund_ids,
             peer_fund_ids=peers,
             notes=notes,
+            classification_rule_hits=rule_hits,
+            classification_confidence=confidence,
         )
         logger.info(
-            "planner: task_type=%s primary=%s peers=%s",
+            "planner: task_type=%s primary=%s peers=%s rule=%s confidence=%.2f",
             task_type,
             primary,
             peers,
+            classification.rule_hit,
+            confidence,
         )
         return PlannerOutput(
             task_type=task_type,
             research_plan=plan,
             peer_fund_ids=peers,
         )
-
-    @staticmethod
-    def _initial_task_type(state: FundForgeState) -> TaskType:
-        """读取 Router 的初始分类（State 回传可能是 str/enum，容错归一化）。"""
-        raw = state.get("task_type")
-        if raw is None:
-            return TaskType.FUND_RESEARCH
-        try:
-            return TaskType(str(raw))
-        except ValueError:
-            return TaskType.FUND_RESEARCH
 
 
 __all__ = ["PlannerNode", "PlannerOutput", "extract_fund_codes"]

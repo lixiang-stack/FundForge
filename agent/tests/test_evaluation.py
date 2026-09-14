@@ -1,5 +1,7 @@
 """Evaluator / Repair 节点单元测试（Phase 5 验收，全确定性）。"""
 
+import pytest
+
 from domain.evaluation import EvaluationResult
 from domain.thesis import Claim, InvestmentThesis, Strength
 from nodes.evaluator import EvaluatorNode
@@ -93,6 +95,31 @@ class TestEvaluator:
     def test_score_between_zero_and_one(self):
         out = EvaluatorNode()(_thesis_state(quality_ev1="missing"))
         assert 0.0 <= out["evaluation"].overall_score <= 1.0
+
+    def test_coverage_ratio_hard_threshold(self):
+        # 3 个 Claim 中 1 个有效绑定 → 覆盖率 33% < 50% 阈值 → 追加硬阈值 issue
+        state = _thesis_state()
+        state["claims"] = [
+            {"id": "claim-1", "statement": "有效", "claim_type": "risk", "evidence_ids": [EV1], "strength": "strong"},
+            {"id": "claim-2", "statement": "空绑定", "claim_type": "peer", "evidence_ids": [], "strength": "weak"},
+            {"id": "claim-3", "statement": "坏引用", "claim_type": "peer", "evidence_ids": ["ev-x"], "strength": "weak"},
+        ]
+        out = EvaluatorNode()(state)
+        evaluation = out["evaluation"]
+        assert evaluation.claim_coverage_ratio == pytest.approx(1 / 3, abs=0.01)
+        assert any("硬阈值" in i for i in evaluation.evidence_issues)
+        assert evaluation.status == "fail"  # 绑定失败 = 可触发 Repair 的 issue
+
+    def test_binding_failure_is_repairable_evidence_issue(self):
+        state = _thesis_state()
+        state["claims"] = [
+            {"id": "claim-1", "statement": "坏引用", "claim_type": "peer", "evidence_ids": ["ev-ghost"], "strength": "weak"}
+        ]
+        out = EvaluatorNode()(state)
+        evaluation = out["evaluation"]
+        assert evaluation.status == "fail"
+        assert evaluation.critical  # 全部 Claim 未有效绑定 = 严重幻觉风险
+        assert evaluation.claim_coverage_ratio == 0.0
 
 
 class TestRepair:
