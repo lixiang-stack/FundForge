@@ -22,6 +22,7 @@ go build -o client ./cmd/cli
 uv --directory agent sync          # agent deps are managed by uv (pyproject.toml + uv.lock; collector still uses requirements.txt)
 uv --directory agent run python main.py "查询"   # run the agent workflow skeleton
 uv --directory agent run pytest    # agent unit tests (mocked collector, no services needed)
+uv --directory agent run pytest -m integration   # integration tests: real collector data + failure injection (needs docker compose up -d collector; skipped by default)
 docker compose up -d               # full stack: postgres :5432, collector :8000, server :8080
 ```
 
