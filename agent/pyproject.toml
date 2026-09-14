@@ -19,3 +19,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: 需要运行中的 collector 服务（docker compose up -d collector）",
+]
+addopts = "-m 'not integration'"

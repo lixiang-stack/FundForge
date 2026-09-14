@@ -5,8 +5,12 @@
 - 不保存 LLM Client、DB Connection、Tool Instance 等运行时对象；
 - evidence 只允许追加。
 
-Phase 1 新增：research_plan、fund_ids、funds_summary、evidence、tool_calls、
-data_quality_issues。完整基金数据与净值序列存放在外部 Store（store.py）。
+节点输出约定：
+- **节点只返回自己负责的字段**（各模块内的 XxxOutput TypedDict），其余字段由
+  Graph 按 key 合并保留；因此所有 Output 均为 total=False（允许部分更新）。
+- Output 的 key/类型必须是本 State 字段的子集/同型，由 tests/test_contracts.py 强制。
+
+完整基金数据与净值序列存放在外部 Store（store.py）。
 """
 
 from typing import TypedDict
