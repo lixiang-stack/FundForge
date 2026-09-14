@@ -107,6 +107,25 @@ class RepairNode:
                 update={"risks": [*updated_thesis.risks, _RISK_DISCLOSURE]}
             )
 
+        # ---- 数据缺口披露（Phase 8 硬指标对应动作）----
+        state_issues = list(state.get("data_quality_issues", []))
+        if (
+            updated_thesis is not None
+            and evaluation.missing_items
+            and state_issues
+            and not updated_thesis.data_gaps
+        ):
+            actions.append(
+                RepairAction(
+                    action_type=RepairActionType.ADD_RISK_DISCLOSURE,
+                    target="thesis.data_gaps",
+                    reason="数据质量问题未在 data_gaps 披露，已补充",
+                )
+            )
+            updated_thesis = updated_thesis.model_copy(
+                update={"data_gaps": [*updated_thesis.data_gaps, *state_issues]}
+            )
+
         # ---- reduce_confidence ----
         if evaluation.status == EvaluationStatus.FAIL and updated_thesis is not None:
             new_confidence = max(

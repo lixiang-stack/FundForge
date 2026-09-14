@@ -26,3 +26,6 @@ __pycache__/
 
 # local debug captures
 /agent/log
+
+# Agent local trace files (TRACE_FILE)
+/agent/traces/

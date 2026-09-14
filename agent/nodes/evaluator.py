@@ -101,6 +101,7 @@ class EvaluatorNode:
             critical_binding_failure = False
 
         # ---- Completeness ----
+        state_quality_issues = list(state.get("data_quality_issues", []))
         if evidence and thesis is None:
             missing.append("存在已采集证据但缺少投资论点（Thesis）")
         if thesis is not None:
@@ -108,6 +109,9 @@ class EvaluatorNode:
                 missing.append("Thesis 中没有任何 Claim（重要结论必须有 Claim 支撑）")
             if not thesis.suitability.strip():
                 missing.append("Thesis 缺少 suitability（未回答「是否适合长期持有」）")
+            # data_gaps 披露硬指标：存在数据质量问题却未披露
+            if state_quality_issues and not thesis.data_gaps:
+                missing.append("State 存在数据质量问题但 thesis.data_gaps 未披露")
 
         # ---- Risk Coverage ----
         if thesis is not None and not thesis.risks:
@@ -123,8 +127,6 @@ class EvaluatorNode:
                 alignment.append("query 要求基金对比，但未生成 peer 对比数据")
         if _LONG_TERM_KEYWORD in query and thesis is not None and "长期" not in thesis.suitability:
             alignment.append("query 询问长期持有，但 suitability 未回应持有期限维度")
-
-        state_quality_issues = list(state.get("data_quality_issues", []))
 
         issue_groups = [factual, evidence_issues, missing, risk_issues, alignment]
         evaluation = EvaluationResult(
