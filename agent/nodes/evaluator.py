@@ -28,6 +28,7 @@ from state import FundForgeState
 logger = logging.getLogger(__name__)
 
 _LONG_TERM_KEYWORD = "长期持有"
+_MIN_CLAIM_COVERAGE_RATIO = 0.5
 
 
 class EvaluatorOutput(TypedDict, total=False):
@@ -61,6 +62,7 @@ class EvaluatorNode:
         evidence_by_id = {e.id: e for e in evidence}
 
         # ---- Evidence Coverage / Factuality（针对 claims） ----
+        bound_claims = 0
         for claim in claims:
             if not claim.evidence_ids:
                 evidence_issues.append(f"claim {claim.id} 未绑定任何 evidence")
@@ -68,6 +70,8 @@ class EvaluatorNode:
             unknown = [eid for eid in claim.evidence_ids if eid not in evidence_by_id]
             if unknown:
                 evidence_issues.append(f"claim {claim.id} 引用了不存在的证据 {unknown}")
+                continue
+            bound_claims += 1
             missing_quality = [
                 eid
                 for eid in claim.evidence_ids
@@ -80,6 +84,21 @@ class EvaluatorNode:
                 factual.append(
                     f"claim {claim.id} 引用的证据 {missing_quality} 数据质量为 missing，结论不可信"
                 )
+
+        # ---- 证据覆盖率硬阈值（Claim 数量 vs 有效绑定） ----
+        # 绑定失败（空绑定 / 无效引用）即 evidence_issues，可直接触发 Repair；
+        # 覆盖率 < 50% 追加硬阈值 issue，同样走 Repair（丢弃/降级 Claim 后重评）。
+        coverage_ratio = round(bound_claims / len(claims), 2) if claims else 1.0
+        if claims and coverage_ratio < _MIN_CLAIM_COVERAGE_RATIO:
+            evidence_issues.append(
+                f"证据覆盖率 {coverage_ratio:.0%} 低于 {_MIN_CLAIM_COVERAGE_RATIO:.0%} 硬阈值"
+                f"（{bound_claims}/{len(claims)} 个 Claim 有效绑定）"
+            )
+        if claims and bound_claims == 0:
+            # 全部 Claim 未有效绑定 = 严重幻觉风险
+            critical_binding_failure = True
+        else:
+            critical_binding_failure = False
 
         # ---- Completeness ----
         if evidence and thesis is None:
@@ -121,7 +140,8 @@ class EvaluatorNode:
             question_alignment_issues=alignment,
             data_quality_issues=state_quality_issues,
             overall_score=_overall_score(issue_groups),
-            critical=bool(evidence_issues),
+            claim_coverage_ratio=coverage_ratio,
+            critical=bool(evidence_issues) or critical_binding_failure,
         )
 
         logger.info(

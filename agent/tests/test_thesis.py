@@ -104,11 +104,19 @@ class TestThesisNode:
         assert out["claims"][0].evidence_ids == [EV1]
         assert out["data_quality_issues"] == []
 
-    def test_missing_evidence_ids_fails_validation(self):
-        # Pydantic 强制 evidence_ids 非空：缺失 → 无法构造 Claim
-        bad = {"id": "c1", "statement": "s", "claim_type": "risk", "evidence_ids": [], "strength": "weak"}
-        with pytest.raises(ValidationError):
-            Claim(**bad)
+    def test_missing_evidence_ids_demoted_to_data_gaps(self):
+        # 空绑定 Claim 不再导致解析失败：节点后处理降级为 data_gaps 并从 claims 移除
+        thesis = _thesis(
+            [
+                Claim(id="c1", statement="无证据的结论", claim_type="risk", evidence_ids=[], strength="weak"),
+                Claim(id="c2", statement="有效结论", claim_type="risk", evidence_ids=[EV1], strength="strong"),
+            ]
+        )
+        out = ThesisNode(FakeLLMProvider(thesis))(_state())
+
+        assert [c.statement for c in out["claims"]] == ["有效结论"]
+        assert any("无证据的结论" in g for g in out["investment_thesis"].data_gaps)
+        assert any("未绑定任何 evidence" in i for i in out["data_quality_issues"])
 
     def test_unknown_evidence_reference_dropped(self):
         thesis = _thesis(

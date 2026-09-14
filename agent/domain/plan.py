@@ -6,7 +6,7 @@ V1 结构刻意保持最小；后续 Phase 按需扩展（对比基金、研究�
 from pydantic import BaseModel, Field
 
 from domain.shared import coerce_model
-from domain.task_type import TaskType
+from domain.task_type import ClassificationRuleHit, TaskType
 
 
 class ResearchPlan(BaseModel):
@@ -15,6 +15,9 @@ class ResearchPlan(BaseModel):
     fund_ids: list[str] = Field(default_factory=list)
     peer_fund_ids: list[str] = Field(default_factory=list)  # 对比基金（§2 State Contract）
     notes: list[str] = Field(default_factory=list)
+    # 意图分类溯源（nodes/intent.py 规则命中），供评测与对齐检查
+    classification_rule_hits: list[ClassificationRuleHit] = Field(default_factory=list)
+    classification_confidence: float | None = None
 
     @classmethod
     def from_state(cls, value: "ResearchPlan | dict | None") -> "ResearchPlan | None":

@@ -123,7 +123,13 @@ class ThesisNode:
         valid_ids = {e.id for e in evidence}
         valid_claims: list[Claim] = []
         issues: list[str] = []
+        demoted_gaps: list[str] = []
         for claim in thesis.claims:
+            if not claim.evidence_ids:
+                # 空绑定：Claim 降级为 data_gaps（不可验证的结论不进入 claims）
+                demoted_gaps.append(f"未绑定证据的结论（已降级）：{claim.statement}")
+                issues.append(f"claim {claim.id} 未绑定任何 evidence，已降级为数据缺口")
+                continue
             unknown = [eid for eid in claim.evidence_ids if eid not in valid_ids]
             if unknown:
                 issues.append(f"claim {claim.id} 引用了不存在的证据 {unknown}，已丢弃")
@@ -137,17 +143,26 @@ class ThesisNode:
                 extra_issues=issues,
             )
 
+        # 强制映射：State 中的数据质量问题必须反映到 thesis.data_gaps（去重）
+        state_quality_issues = list(state.get("data_quality_issues", []))
+        merged_gaps = list(thesis.data_gaps)
+        for gap in [*state_quality_issues, *demoted_gaps]:
+            if gap not in merged_gaps:
+                merged_gaps.append(gap)
+
         thesis = thesis.model_copy(
             update={
                 # 重写 claim id 保证唯一且格式统一
-                "claims": [c.model_copy(update={"id": f"claim-{i + 1}"}) for i, c in enumerate(valid_claims)]
+                "claims": [c.model_copy(update={"id": f"claim-{i + 1}"}) for i, c in enumerate(valid_claims)],
+                "data_gaps": merged_gaps,
             }
         )
-        all_issues = [*state.get("data_quality_issues", []), *issues]
+        all_issues = [*state_quality_issues, *issues]
         logger.info(
-            "thesis: %d claims (of %d), confidence=%.2f",
+            "thesis: %d claims (of %d), demoted=%d, confidence=%.2f",
             len(thesis.claims),
             len(thesis.claims) + len(issues),
+            len(demoted_gaps),
             thesis.confidence,
         )
         return ThesisOutput(

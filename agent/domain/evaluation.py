@@ -32,6 +32,8 @@ class EvaluationResult(BaseModel):
     risk_issues: list[str] = Field(default_factory=list)
     question_alignment_issues: list[str] = Field(default_factory=list)
     data_quality_issues: list[str] = Field(default_factory=list)
+    # Claim 证据覆盖率 = 有效绑定 Claim 数 / 总 Claim 数（硬阈值 0.5，见 Evaluator）
+    claim_coverage_ratio: float = Field(default=1.0, ge=0, le=1)
     overall_score: float = Field(default=0.0, ge=0, le=1)
     critical: bool = False                # 致命问题（数据错误 / 严重幻觉）
 

@@ -181,10 +181,7 @@ def _peer_text(analysis: AnalysisResult | None) -> str | None:
             f"年化波动 {_fmt_pct(row.annual_volatility)}，"
             f"最大回撤 {_fmt_pct(row.max_drawdown)}，夏普 {sharpe}"
         )
-    lines.append(
-        "注：各基金指标基于其自身全部历史净值计算，区间起点不同，"
-        "横向对比仅供参考（后续版本将做区间对齐）。"
-    )
+    lines.append("注：各基金指标已对齐至共同区间（最短历史为准，最长 10 年）计算，口径一致。")
     return "\n".join(lines)
 
 
