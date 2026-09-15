@@ -29,6 +29,7 @@ from nodes import (
 )
 from state import FundForgeState
 from store import FundStore
+from observability import RunTracer
 from tools.collector_client import CollectorClient
 from tools.fund_tools import make_fund_tools
 
@@ -57,28 +58,32 @@ def build_graph(
     client: CollectorClient | None = None,
     store: FundStore | None = None,
     llm: LLMProvider | None = None,
+    tracer: RunTracer | None = None,
 ):
     """构建并编译 FundForge V1 Graph。
 
-    client / store / llm 可注入（测试用）；llm 缺省时按环境变量构建
+    client / store / llm / tracer 可注入（测试用）；llm 缺省时按环境变量构建
     （LLM_BASE_URL / LLM_API_KEY / LLM_MODEL），未配置则 Thesis 节点降级。
+    tracer 记录每个节点的输入/输出摘要，供可观测性 sink 持久化。
     """
     store = store or FundStore()
     client = client or CollectorClient()
     llm = llm if llm is not None else make_default_llm()
+    tracer = tracer or RunTracer()
+    tracer.llm_model = getattr(llm, "model", None)
     tools = make_fund_tools(client, store)
 
     graph = StateGraph(FundForgeState)
 
-    graph.add_node("router", RouterNode())
-    graph.add_node("planner", PlannerNode())
-    graph.add_node("collector", CollectorNode(tools))
-    graph.add_node("analyzer", AnalyzerNode(store))
-    graph.add_node("researcher", ResearcherNode())
-    graph.add_node("thesis", ThesisNode(llm))
-    graph.add_node("evaluator", EvaluatorNode())
-    graph.add_node("repair", RepairNode())
-    graph.add_node("synthesizer", SynthesizerNode())
+    graph.add_node("router", tracer.wrap("router", RouterNode()))
+    graph.add_node("planner", tracer.wrap("planner", PlannerNode()))
+    graph.add_node("collector", tracer.wrap("collector", CollectorNode(tools)))
+    graph.add_node("analyzer", tracer.wrap("analyzer", AnalyzerNode(store)))
+    graph.add_node("researcher", tracer.wrap("researcher", ResearcherNode()))
+    graph.add_node("thesis", tracer.wrap("thesis", ThesisNode(llm)))
+    graph.add_node("evaluator", tracer.wrap("evaluator", EvaluatorNode()))
+    graph.add_node("repair", tracer.wrap("repair", RepairNode()))
+    graph.add_node("synthesizer", tracer.wrap("synthesizer", SynthesizerNode()))
 
     graph.add_edge(START, "router")
     graph.add_edge("router", "planner")

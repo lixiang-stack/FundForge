@@ -121,6 +121,26 @@ class TestEvaluator:
         assert evaluation.critical  # 全部 Claim 未有效绑定 = 严重幻觉风险
         assert evaluation.claim_coverage_ratio == 0.0
 
+    def test_undisclosed_data_quality_issues_fail(self):
+        # Phase 8 硬指标：存在数据质量问题但 thesis.data_gaps 为空 → 未披露
+        state = _thesis_state()
+        state["data_quality_issues"] = ["519770: 净值数据不足"]
+        out = EvaluatorNode()(state)
+        evaluation = out["evaluation"]
+        assert evaluation.status == "fail"
+        assert any("data_gaps 未披露" in i for i in evaluation.missing_items)
+
+    def test_disclosed_data_quality_issues_pass(self):
+        thesis = _thesis(
+            [Claim(id="c1", statement="s", claim_type="risk", evidence_ids=[EV1], strength="weak")],
+            data_gaps=["519770: 净值数据不足"],
+        )
+        state = _evidence_state()
+        state["investment_thesis"] = thesis.model_dump(mode="json")
+        state["data_quality_issues"] = ["519770: 净值数据不足"]
+        out = EvaluatorNode()(state)
+        assert out["evaluation"].status == "pass"
+
 
 class TestRepair:
     def test_drops_claims_with_invalid_references(self):
@@ -189,6 +209,28 @@ class TestRepair:
         out = RepairNode()({"evaluation": evaluation.model_dump(mode="json"), "iteration": 0})
         assert out["iteration"] == 1
         assert out["repair_actions"] == []
+
+    def test_repair_discloses_data_gaps(self):
+        # Phase 8 硬指标对应动作：把 State 数据质量问题补进 thesis.data_gaps
+        evaluation = EvaluationResult(
+            status="fail", missing_items=["State 存在数据质量问题但 thesis.data_gaps 未披露"]
+        )
+        thesis = _thesis(
+            [Claim(id="c1", statement="s", claim_type="risk", evidence_ids=[EV1], strength="weak")],
+            data_gaps=[],
+        )
+        state = {
+            "evaluation": evaluation.model_dump(mode="json"),
+            "investment_thesis": thesis.model_dump(mode="json"),
+            "claims": thesis.claims,
+            "evidence": [{"id": EV1, "evidence_type": "fund_data", "source": "s", "value": {}}],
+            "data_quality_issues": ["519770: 净值数据不足"],
+            "iteration": 0,
+        }
+        out = RepairNode()(state)
+
+        assert out["investment_thesis"].data_gaps == ["519770: 净值数据不足"]
+        assert any("thesis.data_gaps" in a for a in out["repair_actions"])
 
     def test_does_not_replan(self):
         # 允许动作之外不应出现任何动作类型

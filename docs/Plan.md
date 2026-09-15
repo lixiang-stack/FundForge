@@ -16,7 +16,9 @@
 | **Phase 4**  | 结构化报告                | Synthesizer + Report                | 1 天       |
 | **Phase 5**  | 评估与有限修复            | Evaluator + Repair（max=1）         | 1–2 天     |
 | **Phase 6**  | 完整核心 Case             | 端到端「单基金+对比」可运行         | 1–2 天     |
-| **Phase 7+** | 增强与工程化              | 成本控制、可观测、评测集、对比/筛选 | 后续       |
+| **Phase 7**  | 数据质量与失败路径硬化    | data_quality 全链路 + 失败注入测试  | 1–2 天     |
+| **Phase 8**  | Claim-Evidence 运行时强制 | 绑定硬约束 + Evaluator 强化         | 1–2 天     |
+| **Phase 9**  | 可观测性基础              | 完整 Trace 可持久化、可查询         | 1–2 天     |
 
 ---
 
@@ -153,13 +155,65 @@
 
 ---
 
-### Phase 7+（后续迭代，按优先级）
+### Phase 7：数据质量与失败路径硬化（最高优先）
 
-1. **成本控制与可观测性**：CostLimits、Langfuse 接入、详细 ToolCallRecord
-2. **评测集 v0.1**：20 个 Fund Research Case + 简单回归脚本
-3. **Fund Comparison 完整支持**
-4. **数据质量与降级策略增强**
-5. **Fund Screening / Portfolio Analysis**（更后）
+**目标**：让「数据缺失 / 接口失败 / 部分可用」在全链路可感知、可降级、可测试。
+
+**内容**：
+- Collector：明确区分「业务正常空」（债基无股票持仓）vs「数据源失败 / 超时 / 字段缺失」
+- 所有进入 State / Evidence 的对象强制带准确的 `data_quality`
+- Analyzer：计算前检查必要序列完整性，不完整时写入 `data_quality_issues` 并跳过或降权相关指标
+- Thesis：强制把 `data_quality_issues` 映射到 `data_gaps`，并降低相关 Claim strength
+- 增加 3–5 个「强制失败注入」测试（mock Tool 返回 partial/stale/missing）
+
+**验收**：
+- 人为制造数据缺失时，最终报告明确披露 gaps，且不产生虚假强结论
+- 相关单元测试 + graph 测试全部通过
+- 人类可从 Trace 直接看到 data_quality 流转
+
+**不包含**：真实外部研究、费率计算。
+
+---
+
+### Phase 8：Claim-Evidence 运行时强制 + Evaluator 强化
+
+**目标**：把「重要结论必须有 Evidence」从约定变成运行时硬约束。
+
+**内容**：
+- Thesis 输出后增加轻量后处理：无 `evidence_ids` 的 Claim 自动降级或移入 `data_gaps`
+- Evaluator 增加硬指标：
+  - 重要 Claim 的 Evidence 覆盖率下限
+  - `data_gaps` 是否被正确披露
+- 把「绑定失败」作为可触发 Repair 的明确 issue 类型（仍遵守 `max_iteration=1`）
+- 固化 Phase 6 标准三基金 Case 为回归基线（预期 Claim 数量、覆盖率下限）
+
+**验收**：
+- 故意生成无 Evidence 的 Claim 时，系统能检测并处理
+- 回归基线稳定通过
+- 报告中关键结论均可追溯
+
+---
+
+### Phase 9：可观测性基础
+
+**目标**：让每次运行的完整 Trace（节点、Tool、Token、Evidence、Evaluation）可持久化、可查询。
+
+**内容**：
+- 接入 Langfuse（或同等轻量方案），记录：
+  - 每个节点输入/输出摘要
+  - `ToolCallRecord`
+  - `TokenUsage`
+  - Evaluation 结果
+  - 最终 Report 元数据
+- `main.py` / 入口支持输出 Trace ID
+- 保持现有控制台 Trace 不变（兼容人类 review）
+
+**验收**：
+- 一次完整运行后，能在可观测平台看到完整链路
+- 不影响现有功能与测试
+- 可按 `request_id` 回溯
+
+**不包含**：费率表与成本熔断（成本熔断仍依赖现有 `max_iteration`）。
 
 ---
 

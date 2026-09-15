@@ -35,6 +35,24 @@ def llm_timeout_seconds() -> float:
         return 120.0
 
 
+def langfuse_host() -> str:
+    # 兼容两种常见命名：LANGFUSE_HOST（SDK 约定）与 LANGFUSE_BASE_URL
+    return os.getenv("LANGFUSE_HOST", "") or os.getenv("LANGFUSE_BASE_URL", "")
+
+
+def langfuse_public_key() -> str:
+    return os.getenv("LANGFUSE_PUBLIC_KEY", "")
+
+
+def langfuse_secret_key() -> str:
+    return os.getenv("LANGFUSE_SECRET_KEY", "")
+
+
+def trace_file_path() -> str:
+    """本地 JSONL Trace 文件路径（TRACE_FILE）；空表示不启用。"""
+    return os.getenv("TRACE_FILE", "")
+
+
 __all__ = [
     "collector_base_url",
     "collector_timeout_seconds",
@@ -42,4 +60,8 @@ __all__ = [
     "llm_api_key",
     "llm_model",
     "llm_timeout_seconds",
+    "langfuse_host",
+    "langfuse_public_key",
+    "langfuse_secret_key",
+    "trace_file_path",
 ]

@@ -30,6 +30,8 @@ Local dev against containers: `docker compose up -d postgres collector`, then ex
 
 Agent LLM (thesis node): `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` (OpenAI-compatible chat/completions, e.g. DeepSeek). Unconfigured → thesis node degrades gracefully (no thesis, issue recorded).
 
+Agent observability (Phase 9): `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` — every run's trace (node spans, tool calls, token usage, evaluation scores, report metadata) is written to Langfuse; trace id is derived from `request_id` for lookup. `TRACE_FILE` (e.g. `agent/traces/runs.jsonl`) additionally appends each run as one JSON line for offline analysis (`jq`/pandas); both can be enabled together (fan-out). Unconfigured → NullTraceSink (console trace only, no failure).
+
 ## Migrations
 
 golang-migrate, files `migrations/NNNNNN_name.{up,down}.sql`. Server auto-applies on startup (`internal/adapter/persistence/postgres/db.go`, which rewrites the DSN scheme `postgres://` → `pgx5://`). The CLI can apply them via `./client migrate` with `MIGRATIONS_PATH` set. Always write both up and down files.
