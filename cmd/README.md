@@ -11,6 +11,14 @@ FundForge 的 Go 后端（Go 1.25 / Gin / pgx/v5 / golang-migrate / Zap），面
 
 ---
 
+## 硬性约定（改代码前必读）
+
+* **装配点**：DI 全部手动装配在 `cmd/server/main.go`——新增 repository / use case 必须在那里接线，否则不生效。
+* **枚举双重约束**：alert status/severity、strategy operators 等枚举同时存在于 DB CHECK 约束（migrations）与 domain 包类型常量，改动必须两处同步。
+* **时区敏感**：交易日 / 净值日期对齐逻辑依赖时区；容器统一 `TZ=Asia/Shanghai`，涉及"今天是否交易日"的改动先确认运行环境的时区。
+
+---
+
 ## 运行必备条件（两者通用）
 
 * 启动依赖服务（PostgreSQL + Collector，`server` 容器化部署时随 compose 一起启动）
@@ -168,7 +176,7 @@ export MIGRATIONS_PATH="file:///path/to/FundForge/migrations"
 ./client migrate
 ```
 
-迁移文件为 `migrations/NNNNNN_name.{up,down}.sql`，up 与 down 必须成对提供。
+迁移文件为 `migrations/NNNNNN_name.{up,down}.sql`，up 与 down 必须成对提供。server 启动自动迁移时会把 DSN scheme `postgres://` 改写为 `pgx5://`（pgx/v5 连接协议，见 `internal/adapter/persistence/postgres/db.go`）。
 
 ---
 
@@ -179,3 +187,5 @@ go build ./...            # 编译检查
 go test ./... -count=1    # 单元测试（无 DB / 容器依赖）
 go vet ./...              # 仓库无 linter 配置，vet 是唯一额外检查
 ```
+
+* mock 约定：testify + 手写 mock，集中在 `internal/adapter/http/testhelpers_test.go`——新增 domain 仓储接口必须同步更新那里的 mock，否则编译不过。

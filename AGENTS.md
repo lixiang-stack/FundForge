@@ -8,7 +8,7 @@
 
 **适用尺度：** 本规范偏向"谨慎优先于速度"。琐碎改动（typo、单行修复等）可凭判断从简；但第五条（项目硬约束）与 1.6（破坏性操作前确认）在任何任务下都不豁免。
 
-**结构导读（按工作生命周期排列）：** 第一~四条规范"怎么想、怎么写"（流程与代码行为）；第五条划定"不能碰的墙"（项目硬约束）；第六条规范"怎么验证"；第七~八条规范"怎么收尾"（文档与 Git）；第九~十条是环境与入口速查。
+**结构导读（按工作生命周期排列）：** 第一~四条是**语言无关**的行为准则（怎么想、怎么写），不随技术栈变化；第五条划定项目硬约束、第六条规范验证（含各语言命令与工具细节）；第七~八条规范收尾（文档与 Git）；第九~十条是环境与入口速查。语言 / 项目特定的内容集中在第五、六、九条。
 
 ---
 
@@ -40,7 +40,7 @@
 **核心：** 遵循"少即是多"哲学——写解决问题的最少代码，不做任何投机性设计，不引入非必需的依赖。
 
 - **2.1 (YAGNI)**：只实现当前任务明确要求的功能；不给"未来可能的场景"预留 hook / flag / abstraction；不添加没人要求的"灵活性"或"可配置性"。
-- **2.2 (依赖克制)**：不引入非必需的第三方依赖。Go 代码：标准库与 `go.mod` 已有依赖优先。Python 代码：agent 新增依赖必须进 `agent/pyproject.toml` 并由 `uv lock` 锁定，collector 仍用 `requirements.txt`，两种依赖管理方式不要混用；`uv.lock` 与 `pyproject.toml`、`go.sum` 与 `go.mod` 必须同一 commit 提交。
+- **2.2 (依赖克制)**：不引入非必需的第三方依赖；标准库与项目已有依赖优先。新增依赖必须进对应服务的依赖清单，并同步更新 lockfile（各语言的依赖管理与命令见第九条）。
 - **2.3 (反过度工程)**：简单的函数和数据结构优于复杂的接口和继承体系；不为一次性代码造抽象；三行相似代码好过一个"通用"抽象。自检："资深工程师会认为这段代码过度复杂吗？"——会，就简化；200 行能写成 50 行，就重写。
 
 ---
@@ -60,40 +60,31 @@
 
 **核心：** 代码的首要目的是让人类易于理解。
 
-- **4.1 (错误处理不可协商，但不过度防御)**：错误必须显式处理。Go 代码：传递用 `fmt.Errorf("...: %w", err)` 保留链路，绝不用 `_ = err` 丢信息。Python 代码：observability 层"故障只 log、降级不影响业务"是刻意设计（trace 丢失不能拖垮研究主流程），业务代码不得模仿它吞业务错误。同时，不给不可能发生的场景写防御性错误处理——信任内部代码与框架保证，只在系统边界（用户输入、外部 API）做校验；这与上一句不矛盾：不吞真实错误，也不防不存在的错误。
-- **4.2 (无全局状态，显式装配)**：所有依赖经 struct 字段 / 接口注入；配置 env-only，默认值与 docker-compose 一致。Go 代码：DI 全部手动装配在 `cmd/server/main.go`——新增 repository / use case 必须在那里接线，否则不生效；配置在 `internal/config/config.go`。Python 代码：配置在 `agent/config.py`。
-- **4.3 (副作用可见)**：网络请求、文件写入、外发请求等副作用必须在调用栈上可追。Python 代码：agent 对 collector / LLM 的调用只经 `agent/tools/` 与 `agent/llm/` 的 Provider 接口，不在节点里散落裸 HTTP。
+- **4.1 (错误处理不可协商，但不过度防御)**：错误必须显式处理，不得静默吞掉或丢弃；包装 / 跨层传递错误时保留上下文链路。同时，不给不可能发生的场景写防御性错误处理——信任内部代码与框架保证，只在系统边界（用户输入、外部 API）做校验；这与上一句不矛盾：不吞真实错误，也不防不存在的错误。
+- **4.2 (无全局状态，显式装配)**：所有依赖经 struct 字段 / 接口注入，无隐式全局状态；配置 env-only，默认值与 docker-compose 一致。
+- **4.3 (副作用可见)**：网络请求、文件写入、外发请求等副作用必须在调用栈上可追，收敛到统一的出口封装（本项目的出口约定见 `agent/README.md`）。
 - **4.4 (注释写"为什么"不写"是什么")**：只有"这里为什么这么写"（跨服务契约、历史踩坑、时区敏感、降级设计）值得写下来；函数名能讲清楚的不写。
-- **4.5 (dict / 模型双形态归一化)**：Python 代码：LangGraph 回传的 State 值可能是 dict 也可能是 pydantic 模型——统一用 `agent/domain/shared.py` 的 `coerce_model` 归一化，禁止在业务代码里散落 isinstance 双形态判断。
 
 ---
 
 ## 第五条：项目硬约束
 
-**核心：** 违反下列任一条都会破坏跨服务契约或线上行为；这些不是风格建议，是墙。
+**核心：** 违反下列任一条都会破坏跨服务契约、架构边界或线上行为；这些不是风格建议，是墙。
 
-- **5.1 (六边形依赖方向不可逆)**：Go 代码：`cmd/*` → `internal/adapter` → `internal/application`（用例）→ `internal/domain`（实体 + 仓储接口）；`domain` 不得 import `adapter` / `application`。repository 接口定义在 domain 包，实现放 `internal/adapter/persistence/postgres`。
-- **5.2 (跨语言契约清单)**：跨 Go / Python 的契约改动必须列出全部消费方并同步修改，已知三处：
-  - collector `FIELD_MAPS` 的英文列名 ↔ Go DTO `internal/adapter/collector/dto.go`（`collector/main.py` 无业务逻辑，英文列名是跨服务契约）；
-  - collector API 路径与响应结构 ↔ Go 客户端 `internal/adapter/collector/client.go`、Python 客户端 `agent/tools/collector_client.py`、CLI（`cmd/cli`）；
-  - 改 collector 路由 / 字段前先 grep 全部消费方，一起改。Python 代码：agent 只经 collector API 取数，**严禁直连 akshare**。
-- **5.3 (枚举双重约束)**：Go 代码：alert status/severity、strategy operators 等枚举同时存在于 DB CHECK 约束（migrations）与 domain 包类型常量，改动必须两处同步。
-- **5.4 (迁移成对、路径硬编码)**：Go 代码：迁移文件 `migrations/NNNNNN_name.{up,down}.sql` 必须成对提供；server 启动自动执行迁移（`internal/adapter/persistence/postgres/db.go`，内部会把 DSN scheme `postgres://` 改写为 `pgx5://`），路径硬编码 `file://migrations`——server 必须以仓库根目录为工作目录运行。
-- **5.5 (时区敏感)**：交易日逻辑依赖时区；容器统一 `TZ=Asia/Shanghai`。涉及"今天是否交易日 / 净值日期对齐"的改动，先想清楚运行环境的时区。
-- **5.6 (domain 不依赖框架)**：Go 的 `internal/domain` 与 Python 的 `agent/domain/` 都不得 import 框架（LangGraph、LLM SDK 等）；LLM 只出现在 `agent/llm/` 与 thesis 节点（见 `agent/docs/TechnicalContract.md` 核心原则）。
+- **5.1 (架构分层与 domain 纯净不可逆)**：Go 代码：`cmd/*` → `internal/adapter` → `internal/application`（用例）→ `internal/domain`（实体 + 仓储接口），`domain` 不得 import 上层；Go 的 `internal/domain` 与 Python 的 `agent/domain/` 均不得 import 框架（LangGraph、LLM SDK 等），LLM 只出现在 `agent/llm/` 与 thesis 节点；repository 接口定义在 domain 包，实现放 `internal/adapter/persistence/postgres`。
+- **5.2 (跨语言契约必须同步)**：跨 Go / Python 的契约改动必须 grep 并列出全部消费方、一次同步修改——collector `FIELD_MAPS` 英文列名 ↔ Go DTO `internal/adapter/collector/dto.go`（`collector/main.py` 无业务逻辑）；collector API 路径与响应结构 ↔ Go 客户端、Python 客户端、CLI。agent 只经 collector API 取数，**严禁直连 akshare**。
+- **5.3 (组件级细则在组件 README)**：动下列区域前先读对应 README 的约定小节——Go 装配点（`cmd/server/main.go`，新增 repository / use case 必须接线，否则不生效）、枚举双重约束（DB CHECK ↔ domain 常量两处同步）、时区敏感（`TZ=Asia/Shanghai`，交易日 / 净值日期对齐）、数据库迁移规则，见 `cmd/README.md`；agent 外呼出口、State 双形态归一化（`coerce_model`）、observability 降级设计，见 `agent/README.md`。
 
 ---
 
 ## 第六条：测试与验证
 
-**核心：** 提交前测试必须绿；优先测行为，不测实现细节；改动以测试锚定。
+**核心：** 提交前测试必须绿；优先测行为，不测实现细节。
 
-- **6.1 (改代码前先读测试)**：修既有函数前先看对应 `_test.go` / `tests/` 的断言——若测试覆盖了想改的行为，先决定"是改行为、还是补测试防止退化"。
-- **6.2 (改动以测试锚定)**：修 bug 先写复现测试再修复（见 1.4）；失败测试要么修好、要么直接向用户说明，绝不"顺手"跳过或注释掉。
-- **6.3 (提交前三件套)**：Go 代码：`go build ./...`、`go test ./... -count=1`、`go vet ./...` 零告警（仓库无 linter 配置，vet 是唯一额外检查）。
-- **6.4 (mock 的位置)**：Go 代码：testify + 手写 mock，集中在 `internal/agent/http/testhelpers_test.go`——新增 domain 仓储接口必须同步更新那里的 mock，否则编译不过；无 DB 集成测试，单元测试不依赖容器。
-- **6.5 (agent 测试分两层)**：Python 代码：单元测试 `uv --directory agent run pytest`（mock collector，无需任何服务）；`uv --directory agent run pytest -m integration` 需要真实 collector（`docker compose up -d collector`），默认跳过，失败注入也在这层。
-- **6.6 (无 linter 约定)**：Python 代码：agent 侧当前无 ruff / mypy / formatter 约定——不要顺手引入；确需引入时单独一次 commit 说明，并同步本条。
+- **6.1 (改动以测试锚定)**：修既有函数前先读对应 `_test.go` / `tests/` 的断言——若测试覆盖了想改的行为，先决定"是改行为、还是补测试防止退化"；修 bug 先写复现测试再修复（见 1.4）。失败测试要么修好、要么直接向用户说明，绝不"顺手"跳过或注释掉。
+- **6.2 (Go 提交前三件套)**：`go build ./...`、`go test ./... -count=1`、`go vet ./...` 全部通过才提交；测试组织与 mock 约定详见 `cmd/README.md`。
+- **6.3 (agent 测试分两层)**：单元测试 `uv --directory agent run pytest`（mock collector，无需任何服务）；集成测试 `pytest -m integration` 需要真实 collector，默认跳过，失败注入在集成层；详见 `agent/README.md`。
+- **6.4 (无 linter 约定)**：仓库无 linter 配置——Go 仅 `go vet`，Python 侧无 ruff / mypy / formatter；不要顺手引入，确需引入时单独一次 commit 说明，并同步本条。
 
 ---
 
@@ -111,13 +102,14 @@
 - **8.2 (不加 Co-authored-by)**：commit 末尾**不要**附加 Co-authored-by 署名。
 - **8.3 (不主动 push)**：远程推送由用户决定；仅当用户明确要求时才 push（涉及已推送分支的改写用 `--force-with-lease`）。
 - **8.4 (提交前跑测试)**：第六条的测试通过才提交。
+- **8.5 (清单与锁文件同 commit)**：`uv.lock` 与 `pyproject.toml`、`go.sum` 与 `go.mod` 必须同一 commit 提交。
 
 ---
 
 ## 第九条：技术栈与工具链
 
 - **9.1 (Go 1.25)**：Gin（HTTP）、pgx/v5（PostgreSQL）、golang-migrate（迁移）、Zap（日志）。版本以 `go.mod` 为权威，不要动。
-- **9.2 (Python 3.11)**：agent 依赖由 uv 管理（`pyproject.toml` + `uv.lock`），命令统一 `uv --directory agent ...`；collector 用 `requirements.txt`。
+- **9.2 (Python 3.11)**：agent 与 collector 的 Python 依赖均由 uv 管理（各自的 `pyproject.toml` + `uv.lock`），命令统一 `uv --directory agent ...` / `uv --directory collector ...`；变更依赖后须重新 `uv lock` 更新 lockfile。
 - **9.3 (容器拓扑)**：compose 服务——postgres `:5432`、collector `:8000`、server `:8080`，全部 `TZ=Asia/Shanghai`；`.env` 的容器主机名仅容器内有效。
 
 ---
@@ -127,8 +119,8 @@
 每次开始工作前先扫一眼，无需重复其中内容：
 
 - **`README.md`**：项目描述、目录结构、文档索引。
-- **`cmd/README.md`**：Server 启动与 API 总览、CLI 全部子命令、数据库迁移。
-- **`agent/README.md`**：LangGraph 工作流节点、目录结构、配置、可观测性、测试。
+- **`cmd/README.md`**：Server 启动与 API 总览、CLI 全部子命令、数据库迁移、硬性约定。
+- **`agent/README.md`**：LangGraph 工作流节点、目录结构、配置、可观测性、测试、设计原则。
 - **`agent/docs/*.md`**：Agent 相关文档。
 
 ---

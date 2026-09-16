@@ -101,7 +101,7 @@ TRACE_FILE=agent/traces/runs.jsonl uv run python main.py "分析基金 519770"
 jq -r '.nodes[] | [.node, .duration_ms] | @tsv' agent/traces/runs.jsonl
 ```
 
-两者均未配置时降级为 NullTraceSink（仅控制台），不影响功能。
+两者均未配置时降级为 NullTraceSink（仅控制台），不影响功能。trace 丢失不能拖垮研究主流程——"故障只 log、降级不影响业务"是刻意设计，**业务代码不得模仿它吞业务错误**。
 
 ---
 
@@ -119,7 +119,9 @@ uv run pytest -m integration     # 集成测试：真实 collector 数据 + 失�
 ## 设计原则
 
 - **数据边界**：只通过 collector API 取数，不直连 akshare。
+- **外呼收敛**：对 collector / LLM 的调用只经 `tools/` 与 `llm/` 的 Provider 接口，节点内不散落裸 HTTP。
 - **State 轻量**：State 只保存跨节点摘要与 ID，完整原始数据放 `FundStore`（`raw_ref` 形如 `store:funds/{code}`）。
+- **State 双形态归一化**：LangGraph 回传的 State 值可能是 dict 或 pydantic 模型，统一用 `domain/shared.py` 的 `coerce_model` 归一化，不散落 isinstance 判断。
 - **领域纯净**：`domain/` 不依赖 LangGraph / LLM SDK 等框架（TechnicalContract §15）；LLM 仅出现在 `llm/` 与 thesis 节点。
 - **证据可溯**：Claim 必须绑定 Evidence；不可验证的结论进入 `data_gaps` 而非报告正文。
 - **可观测性不侵入业务**：节点保持业务纯净，业务摘要集中在 `observability/` 层。
