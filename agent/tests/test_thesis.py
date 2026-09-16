@@ -10,6 +10,12 @@ from pydantic import ValidationError
 
 from domain.thesis import Claim, InvestmentThesis
 from domain.report import render_markdown
+from limits import (
+    THESIS_MAX_CLAIMS,
+    THESIS_MAX_ITEM_CHARS,
+    THESIS_MAX_LIST_ITEMS,
+    THESIS_MAX_SUMMARY_CHARS,
+)
 from llm.base import LLMError, LLMResponse, Message
 from nodes.thesis import ThesisNode, build_thesis_prompt
 from tests.conftest import FUND_CODE, make_transport
@@ -159,6 +165,13 @@ class TestThesisNode:
         assert messages[1].role == "user"
         assert EV1 in messages[1].content
         assert FUND_CODE in messages[1].content
+
+    def test_prompt_contains_output_limits(self):
+        system = build_thesis_prompt(_state())[0].content
+        assert f"claims 不超过 {THESIS_MAX_CLAIMS} 条" in system
+        assert f"各不超过 {THESIS_MAX_SUMMARY_CHARS} 字" in system
+        assert f"不超过 {THESIS_MAX_LIST_ITEMS} 条" in system
+        assert f"每条不超过 {THESIS_MAX_ITEM_CHARS} 字" in system
 
 
 class TestThesisInGraph:

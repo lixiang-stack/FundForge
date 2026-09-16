@@ -22,6 +22,7 @@ from openai import APIError, OpenAI
 from pydantic import BaseModel
 
 from config import llm_api_key, llm_base_url, llm_model, llm_timeout_seconds
+from limits import LLM_MAX_TOKENS
 from llm.base import LLMError, LLMResponse, Message
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class OpenAICompatProvider:
             "model": self._model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "temperature": 0.2,
+            "max_tokens": LLM_MAX_TOKENS,
         }
         if structured_output is not None:
             kwargs["response_format"] = {"type": "json_object"}
@@ -69,7 +71,13 @@ class OpenAICompatProvider:
             raise LLMError(f"llm chat/completions failed: {e}") from e
 
         try:
-            content = resp.choices[0].message.content or ""
+            choice = resp.choices[0]
+            if choice.finish_reason == "length":
+                # 截断的 JSON 无法通过调用方 Pydantic 校验，显式报错并保留截断原因
+                raise LLMError(
+                    f"llm output truncated: finish_reason=length, max_tokens={LLM_MAX_TOKENS}"
+                )
+            content = choice.message.content or ""
             usage = resp.usage
             return LLMResponse(
                 content=content,

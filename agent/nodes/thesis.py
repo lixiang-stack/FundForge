@@ -20,6 +20,12 @@ from pydantic import ValidationError
 from domain.evidence import Evidence, TokenUsage
 from domain.thesis import Claim, ClaimType, InvestmentThesis, Strength
 from domain.shared import to_jsonable
+from limits import (
+    THESIS_MAX_CLAIMS,
+    THESIS_MAX_ITEM_CHARS,
+    THESIS_MAX_LIST_ITEMS,
+    THESIS_MAX_SUMMARY_CHARS,
+)
 from llm.base import LLMError, LLMProvider, Message
 from state import FundForgeState
 
@@ -37,7 +43,11 @@ _SYSTEM_PROMPT = f"""你是基金投资研究员，基于给定的事实数据�
 3. suitability 必须直接回答「是否适合长期持有」。
 4. confidence 表示证据充分程度（0~1），不是未来收益概率。
 5. 量化指标来自确定性计算，直接引用即可，不要自行计算。
-6. 只输出符合以下结构的 JSON：
+6. 控制输出体量（生成耗时近似正比于输出长度）：claims 不超过 {THESIS_MAX_CLAIMS} 条；
+   summary 与 suitability 各不超过 {THESIS_MAX_SUMMARY_CHARS} 字；
+   positives、negatives、risks、key_assumptions、data_gaps 每个列表不超过 {THESIS_MAX_LIST_ITEMS} 条、
+   每条不超过 {THESIS_MAX_ITEM_CHARS} 字。只保留最有信息量的内容，不重复 Evidence 原文。
+7. 只输出符合以下结构的 JSON：
 {{
   "summary": "论点概要",
   "claims": [{{"id": "c1", "statement": "结论", "claim_type": "{_CLAIM_TYPES}",
