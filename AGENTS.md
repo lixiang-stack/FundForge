@@ -1,46 +1,128 @@
-# AGENTS.md
+# ==================================
+# 项目 AI 助手工作规范（AGENTS.md）
+# ==================================
 
-## What this is
+本文件定义各类 AI 助手（AGENTS/Claude Code 等）在本仓库工作时的行为准则。项目描述、架构、命令、配置等**业务相关**内容一律在 `README.md`、`cmd/README.md`、`agent/README.md` 与 `agent/docs/`；本文件只负责规范"AI 助手怎么做事"。
 
-FundForge — fund investment research platform. Go 1.25 backend (`cmd/server` REST API, `cmd/cli` admin tool), a Python 3.11 collector (`collector/`, thin FastAPI wrapper around akshare), and a LangGraph agent (`agent/`, the AI research workflow per `docs/Plan.md`). PostgreSQL via pgx/v5. Docs, comments, and SQL comments are largely Chinese — keep that style in user-facing docs.
+条款未特别说明语言的，Go 与 Python 均须遵守。
 
-## Architecture (hexagonal)
+**适用尺度：** 本规范偏向"谨慎优先于速度"。琐碎改动（typo、单行修复等）可凭判断从简；但第五条（项目硬约束）与 1.6（破坏性操作前确认）在任何任务下都不豁免。
 
-Dependency direction: `cmd/*` → `internal/adapter` → `internal/application` (use cases) → `internal/domain` (entities + repository/provider interfaces). `internal/infra` holds cross-cutting helpers (zap logger, retry, circuit breaker).
+**结构导读（按工作生命周期排列）：** 第一~四条是**语言无关**的行为准则（怎么想、怎么写），不随技术栈变化；第五条划定项目硬约束、第六条规范验证（含各语言命令与工具细节）；第七~八条规范收尾（文档与 Git）；第九~十条是环境与入口速查。语言 / 项目特定的内容集中在第五、六、九条。
 
-- Domain packages: `internal/domain/{fund,nav,alert,strategy,benchmark,calendar,marketdata,shared}`. Repository interfaces live in the domain package; implementations in `internal/adapter/persistence/postgres`.
-- HTTP routes: `internal/adapter/http/router.go`. All DI is manual in `cmd/server/main.go` — a new repo/use case must be wired there.
-- Collector boundary: `collector/main.py` contains no business logic. `FIELD_MAPS` in it translates Chinese akshare column names to English; those English names are the cross-service contract, mirrored by Go DTOs in `internal/adapter/collector/dto.go`. Keep both sides in sync. The LangGraph agent (`agent/tools/`) also gets data only through the collector API — never call akshare directly in the agent.
+---
 
-## Commands
+## 第一条：工作流程总纲（先思考，再动手）
 
-```bash
-go test ./... -count=1             # unit tests only; no DB or containers needed
-go vet ./...                       # no linter config exists; this is the only extra check
-go build -o server ./cmd/server    # MUST run from repo root (migrations path is relative: file://migrations)
-go build -o client ./cmd/cli
-uv --directory agent sync          # agent deps are managed by uv (pyproject.toml + uv.lock; collector still uses requirements.txt)
-uv --directory agent run python main.py "查询"   # run the agent workflow skeleton
-uv --directory agent run pytest    # agent unit tests (mocked collector, no services needed)
-uv --directory agent run pytest -m integration   # integration tests: real collector data + failure injection (needs docker compose up -d collector; skipped by default)
-docker compose up -d               # full stack: postgres :5432, collector :8000, server :8080
-```
+**核心：** 动手之前把问题想清楚，把目标变成可验证的；不确定就问，绝不靠猜。
 
-Local dev against containers: `docker compose up -d postgres collector`, then export `DATABASE_URL=postgres://fundforge:fundforge_dev_password@localhost:5432/fundforge?sslmode=disable` and `COLLECTOR_BASE_URL=http://localhost:8000`. The `.env` file uses container hostnames (`postgres`, `collector`) — only valid inside containers, not for host-run binaries (sourcing it on the host breaks collector access; override `COLLECTOR_BASE_URL` after sourcing).
+- **1.1 (读代码优先)**：被要求加功能 / 修 bug 时，第一步是读相关包（对照第五条约束与 README 的关键设计），然后才提方案或动手。
+- **1.2 (显式假设，不靠猜)**：动手前显式陈述关键假设；同一需求存在多种合理解释时，把解释全部列出交用户选择，不要默默挑一个；有更简单的实现方案就直接提出并说明理由。
+- **1.3 (不清楚就停下来问)**：需求含糊、与既有设计矛盾、依赖不明——点名"哪里不清楚"并提问，绝不带着困惑继续写。澄清性提问应发生在动手之前，而不是错误之后。
+- **1.4 (目标驱动执行)**：把任务转成可验证的目标再动手：
+  - "加校验" → 先写非法输入的测试，再让它通过；
+  - "修 bug" → 先写复现该 bug 的测试，再让它通过；
+  - "重构" → 重构前后测试同样通过。
 
-Agent LLM (thesis node): `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` (OpenAI-compatible chat/completions, e.g. DeepSeek). Unconfigured → thesis node degrades gracefully (no thesis, issue recorded).
+  成功标准定义得越强，越能独立循环验证，而不是反复回头问"这样可以吗"。
+- **1.5 (多步任务先列计划)**：跨 3 个以上文件的改动，先说明方案（数据流、每个文件的动作），经用户确认后再动手；多步任务列出分步计划，每一步带验证方式：
 
-Agent observability (Phase 9): `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` — every run's trace (node spans, tool calls, token usage, evaluation scores, report metadata) is written to Langfuse; trace id is derived from `request_id` for lookup. `TRACE_FILE` (e.g. `agent/traces/runs.jsonl`) additionally appends each run as one JSON line for offline analysis (`jq`/pandas); both can be enabled together (fan-out). Unconfigured → NullTraceSink (console trace only, no failure).
+  ```
+  1. [步骤] → 验证: [检查方式]
+  2. [步骤] → 验证: [检查方式]
+  ```
+- **1.6 (破坏性操作前确认)**：`rm -rf`、`git reset --hard`、force push、删除文件、降级依赖等操作必须先向用户说明并等确认。
 
-## Migrations
+---
 
-golang-migrate, files `migrations/NNNNNN_name.{up,down}.sql`. Server auto-applies on startup (`internal/adapter/persistence/postgres/db.go`, which rewrites the DSN scheme `postgres://` → `pgx5://`). The CLI can apply them via `./client migrate` with `MIGRATIONS_PATH` set. Always write both up and down files.
+## 第二条：简单性原则
 
-## Conventions
+**核心：** 遵循"少即是多"哲学——写解决问题的最少代码，不做任何投机性设计，不引入非必需的依赖。
 
-- Config is env-only (`internal/config/config.go`); defaults match the docker-compose dev values.
-- Enums (alert status/severity, strategy operators) are enforced twice: DB CHECK constraints in migrations and typed constants in domain packages. Change both together.
-- Trading-day logic is timezone-sensitive; containers run with `TZ=Asia/Shanghai`.
-- Tests use testify with hand-rolled mock repos in `internal/adapter/http/testhelpers_test.go` — a new domain repository interface means updating the mocks there. No DB integration tests exist.
-- Commits follow conventional style (`feat: ...`).
-- `docs/TechnicalContract.md` defines the planned LangGraph AI-agent layer; its core principle: the domain layer must not depend on frameworks.
+- **2.1 (YAGNI)**：只实现当前任务明确要求的功能；不给"未来可能的场景"预留 hook / flag / abstraction；不添加没人要求的"灵活性"或"可配置性"。
+- **2.2 (依赖克制)**：不引入非必需的第三方依赖；标准库与项目已有依赖优先。新增依赖必须进对应服务的依赖清单，并同步更新 lockfile（各语言的依赖管理与命令见第九条）。
+- **2.3 (反过度工程)**：简单的函数和数据结构优于复杂的接口和继承体系；不为一次性代码造抽象；三行相似代码好过一个"通用"抽象。自检："资深工程师会认为这段代码过度复杂吗？"——会，就简化；200 行能写成 50 行，就重写。
+
+---
+
+## 第三条：外科手术式修改
+
+**核心：** 只改必须改的，只清理自己制造的垃圾；每一行改动都应能直接追溯到任务本身。
+
+- **3.1 (不顺手"改进")**：不"改进"相邻的代码、注释或格式（包括补写没人要求的注释与文档）；不重构没有坏的东西；遵循既有代码风格，即使你有不同偏好。
+- **3.2 (无关死代码只提及不删除)**：发现与任务无关的死代码，向用户提及即可；预先存在的死代码未经要求不删。
+- **3.3 (只清理自己的孤儿)**：你的改动导致 imports / 变量 / 函数失去引用时，必须删除它们——这是收尾责任，不算"顺手改"。
+- **3.4 (一次 commit 只做一件事)**：修 bug 不顺手改无关代码；改功能不顺手 refactor。
+
+---
+
+## 第四条：明确性原则
+
+**核心：** 代码的首要目的是让人类易于理解。
+
+- **4.1 (错误处理不可协商，但不过度防御)**：错误必须显式处理，不得静默吞掉或丢弃；包装 / 跨层传递错误时保留上下文链路。同时，不给不可能发生的场景写防御性错误处理——信任内部代码与框架保证，只在系统边界（用户输入、外部 API）做校验；这与上一句不矛盾：不吞真实错误，也不防不存在的错误。
+- **4.2 (无全局状态，显式装配)**：所有依赖经 struct 字段 / 接口注入，无隐式全局状态；配置 env-only，默认值与 docker-compose 一致。
+- **4.3 (副作用可见)**：网络请求、文件写入、外发请求等副作用必须在调用栈上可追，收敛到统一的出口封装（本项目的出口约定见 `agent/README.md`）。
+- **4.4 (注释写"为什么"不写"是什么")**：只有"这里为什么这么写"（跨服务契约、历史踩坑、时区敏感、降级设计）值得写下来；函数名能讲清楚的不写。
+
+---
+
+## 第五条：项目硬约束
+
+**核心：** 违反下列任一条都会破坏跨服务契约、架构边界或线上行为；这些不是风格建议，是墙。
+
+- **5.1 (架构分层与 domain 纯净不可逆)**：Go 代码：`cmd/*` → `internal/adapter` → `internal/application`（用例）→ `internal/domain`（实体 + 仓储接口），`domain` 不得 import 上层；Go 的 `internal/domain` 与 Python 的 `agent/domain/` 均不得 import 框架（LangGraph、LLM SDK 等），LLM 只出现在 `agent/llm/` 与 thesis 节点；repository 接口定义在 domain 包，实现放 `internal/adapter/persistence/postgres`。
+- **5.2 (跨语言契约必须同步)**：跨 Go / Python 的契约改动必须 grep 并列出全部消费方、一次同步修改——collector `FIELD_MAPS` 英文列名 ↔ Go DTO `internal/adapter/collector/dto.go`（`collector/main.py` 无业务逻辑）；collector API 路径与响应结构 ↔ Go 客户端、Python 客户端、CLI。agent 只经 collector API 取数，**严禁直连 akshare**。
+- **5.3 (组件级细则在组件 README)**：动下列区域前先读对应 README 的约定小节——Go 装配点（`cmd/server/main.go`，新增 repository / use case 必须接线，否则不生效）、枚举双重约束（DB CHECK ↔ domain 常量两处同步）、时区敏感（`TZ=Asia/Shanghai`，交易日 / 净值日期对齐）、数据库迁移规则，见 `cmd/README.md`；agent 外呼出口、State 双形态归一化（`coerce_model`）、observability 降级设计，见 `agent/README.md`。
+
+---
+
+## 第六条：测试与验证
+
+**核心：** 提交前测试必须绿；优先测行为，不测实现细节。
+
+- **6.1 (改动以测试锚定)**：修既有函数前先读对应 `_test.go` / `tests/` 的断言——若测试覆盖了想改的行为，先决定"是改行为、还是补测试防止退化"；修 bug 先写复现测试再修复（见 1.4）。失败测试要么修好、要么直接向用户说明，绝不"顺手"跳过或注释掉。
+- **6.2 (Go 提交前三件套)**：`go build ./...`、`go test ./... -count=1`、`go vet ./...` 全部通过才提交；测试组织与 mock 约定详见 `cmd/README.md`。
+- **6.3 (agent 测试分两层)**：单元测试 `uv --directory agent run pytest`（mock collector，无需任何服务）；集成测试 `pytest -m integration` 需要真实 collector，默认跳过，失败注入在集成层；详见 `agent/README.md`。
+- **6.4 (无 linter 约定)**：仓库无 linter 配置——Go 仅 `go vet`，Python 侧无 ruff / mypy / formatter；不要顺手引入，确需引入时单独一次 commit 说明，并同步本条。
+
+---
+
+## 第七条：文档管理
+
+- **7.1 (文档分层)**：`README.md` 只承载"项目描述、目录结构、子文档索引"（项目完成后再充实）；组件细节在 `cmd/README.md`（Server/CLI/迁移/测试）与 `agent/README.md`（工作流/配置/可观测性/测试）；agent 设计文档在 `agent/docs/`。
+- **7.2 (何时写文档)**：改动跨多个包 / 引入新的跨组件契约时才写；单文件修 bug 用 commit message 与代码注释即可，**不主动生成文档**。
+- **7.3 (语言)**：用户可见文档（README、代码注释、SQL 注释、报告输出）用中文。
+
+---
+
+## 第八条：Git 与提交
+
+- **8.1 (Conventional Commits)**：commit 用 `feat:` / `fix:` / `test:` 等前缀，一句话说清意图。
+- **8.2 (不加 Co-authored-by)**：commit 末尾**不要**附加 Co-authored-by 署名。
+- **8.3 (不主动 push)**：远程推送由用户决定；仅当用户明确要求时才 push（涉及已推送分支的改写用 `--force-with-lease`）。
+- **8.4 (提交前跑测试)**：第六条的测试通过才提交。
+- **8.5 (清单与锁文件同 commit)**：`uv.lock` 与 `pyproject.toml`、`go.sum` 与 `go.mod` 必须同一 commit 提交。
+
+---
+
+## 第九条：技术栈与工具链
+
+- **9.1 (Go 1.25)**：Gin（HTTP）、pgx/v5（PostgreSQL）、golang-migrate（迁移）、Zap（日志）。版本以 `go.mod` 为权威，不要动。
+- **9.2 (Python 3.11)**：agent 与 collector 的 Python 依赖均由 uv 管理（各自的 `pyproject.toml` + `uv.lock`），命令统一 `uv --directory agent ...` / `uv --directory collector ...`；变更依赖后须重新 `uv lock` 更新 lockfile。
+- **9.3 (容器拓扑)**：compose 服务——postgres `:5432`、collector `:8000`、server `:8080`，全部 `TZ=Asia/Shanghai`；`.env` 的容器主机名仅容器内有效。
+
+---
+
+## 第十条：项目上下文入口
+
+每次开始工作前先扫一眼，无需重复其中内容：
+
+- **`README.md`**：项目描述、目录结构、文档索引。
+- **`cmd/README.md`**：Server 启动与 API 总览、CLI 全部子命令、数据库迁移、硬性约定。
+- **`agent/README.md`**：LangGraph 工作流节点、目录结构、配置、可观测性、测试、设计原则。
+- **`agent/docs/*.md`**：Agent 相关文档。
+
+---
+
+**本规范有效的标志：** diff 中没有不必要的改动；没有因过度复杂导致的返工；澄清性提问发生在动手之前，而不是错误之后。

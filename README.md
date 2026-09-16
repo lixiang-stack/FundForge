@@ -1,69 +1,31 @@
 # FundForge
 
-> An AI Agent for fund investment research and portfolio decision support
+> 基金投资研究与组合决策平台：Go 后端 + Python 数据采集 + LangGraph AI 研究工作流
+
+> 详细的功能特性、架构设计与使用说明见各子目录 README，此处只保留项目概览。
 
 ---
 
-## 功能特性
+## 目录结构
 
-**数据采集**
-- 抓取 26,000+ 只公募基金的净值、分红、拆分数据
-- 支持单基金全量初始化（成立来）和已订阅基金每日增量更新
-- 交易日历同步与管理（提供 `IsTradingDay` 等交易日感知查询接口）
-- 基金经理变更自动检测
-
-**策略分析**
-- 14 个量化指标（最大回撤、波动率、夏普比率、Beta、超额收益、区间滚动收益等）
-- 策略条件模板（AND/OR 逻辑组合）
-- 三级告警严重度（Critical / Warning / Info）
-- 告警状态机：触发 → 确认 → 恢复
-
-**API**
-- REST API 提供基金、策略、告警能力
-- 支持 CLI 管理（订阅、同步、分析、告警）
-
----
-
-## 技术栈
-
-| 层级     | 技术                                      |
-| -------- | ----------------------------------------- |
-| 后端     | Go 1.25, Gin, pgx/v5, golang-migrate, Zap |
-| 数据库   | PostgreSQL 15+                            |
-| 数据采集 | Python 3.11, FastAPI, akshare             |
-| 部署     | Docker, Docker Compose                    |
-
----
-
-## 快速开始
-
-### Docker Compose 一键启动
-
-```bash
-docker compose up -d
+```
+├── cmd/           # Go 入口：server（REST API）、cli（管理工具）
+├── internal/      # 六边形分层：adapter / application / domain / infra
+├── migrations/    # golang-migrate SQL（up/down 成对）
+├── collector/     # Python 数据采集服务（akshare → REST，覆盖公募基金净值/分红/拆分/日历）
+├── agent/         # LangGraph AI 研究工作流（意图路由 → 采集 → 分析 → 论点 → 评估 → 报告；设计文档在 agent/docs/）
+└── docker-compose.yml
 ```
 
-服务全部容器化：
-
-| 服务       | 端口 | 说明            |
-| ---------- | ---- | --------------- |
-| PostgreSQL | 5432 | 数据库          |
-| Collector  | 8000 | Python 数据采集 |
-| Server     | 8080 | Go API 后端     |
-
-### 组件文档
-
-- **Server（REST API）**：详见 [`cmd/server/README.md`](cmd/server/README.md) —— 启动方式、环境变量、API 能力总览
-- **CLI（管理工具）**：详见 [`cmd/cli/README.md`](cmd/cli/README.md) —— 编译与配置、全部子命令示例
-
 ---
 
-## 测试
+## 文档索引
 
-```bash
-# Go 单元测试
-go test ./... -count=1
-```
+| 文档 | 内容 |
+| ---- | ---- |
+| [`cmd/README.md`](cmd/README.md) | Server 启动与 API 总览、CLI 全部子命令、环境变量、数据库迁移、测试 |
+| [`agent/README.md`](agent/README.md) | LangGraph 工作流节点、目录结构、配置、可观测性、测试、设计文档 |
+| [`AGENTS.md`](AGENTS.md) | AI 助手协作规范 |
 
 ---
 
