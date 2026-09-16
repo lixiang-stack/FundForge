@@ -1,10 +1,40 @@
 """节点单元测试：Planner 提取与 Collector 节点行为。"""
 
-from tests.conftest import FUND_CODE, make_tools
+import threading
+import time
+
+import httpx
+
+from tests.conftest import FUND_CODE, make_tools, make_transport
 from nodes.collector import CollectorNode
 from nodes.planner import PlannerNode, extract_fund_codes
 from nodes.router import RouterNode
 from domain.task_type import TaskType
+from store import FundStore
+from tools.collector_client import CollectorClient
+from tools.fund_tools import make_fund_tools
+
+
+class _TrackingTransport(httpx.BaseTransport):
+    """包装内层 transport，统计最大并发在途请求数（验证 Tool 级并发）。"""
+
+    def __init__(self, inner: httpx.BaseTransport) -> None:
+        self._inner = inner
+        self._lock = threading.Lock()
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        with self._lock:
+            self._in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        try:
+            # mock 请求本身过快，留出重叠窗口才能观测到并发
+            time.sleep(0.05)
+            return self._inner.handle_request(request)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
 
 
 class TestPlanner:
@@ -128,6 +158,44 @@ class TestCollectorNode:
             assert out["funds_summary"] == []
             assert out["evidence"] == []
             assert out["data_quality_issues"]
+        finally:
+            client.close()
+
+    def test_tools_within_fund_run_concurrently(self):
+        tracking = _TrackingTransport(make_transport())
+        client = CollectorClient(base_url="http://collector.test", transport=tracking)
+        node = CollectorNode(make_fund_tools(client, FundStore()))
+        try:
+            state = {
+                "user_query": f"分析基金 {FUND_CODE}",
+                "research_plan": {"task_type": "fund_research", "fund_ids": [FUND_CODE], "notes": []},
+            }
+            out = node(state)
+
+            assert len(out["tool_calls"]) == 3
+            assert all(t.success for t in out["tool_calls"])
+            # 3 个 Tool 并发执行：在途峰值应 ≥ 2（顺序执行恒为 1）
+            assert tracking.max_in_flight >= 2
+        finally:
+            client.close()
+
+    def test_multi_fund_result_order_preserved(self):
+        node, _, client = self._node()
+        try:
+            state = {
+                "user_query": f"对比 {FUND_CODE} 和 000001",
+                "research_plan": {
+                    "task_type": "fund_research",
+                    "fund_ids": [FUND_CODE, "000001"],
+                    "notes": [],
+                },
+            }
+            out = node(state)
+
+            assert out["fund_ids"] == [FUND_CODE, "000001"]
+            assert [s.id for s in out["funds_summary"]] == [FUND_CODE, "000001"]
+            # 并发不改变记录顺序：先第一只基金的 3 次调用，再第二只
+            assert [t.arguments["fund_id"] for t in out["tool_calls"]] == [FUND_CODE] * 3 + ["000001"] * 3
         finally:
             client.close()
 

@@ -6,6 +6,7 @@ FundForge Collector Service - akshare 数据采集薄包装层
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from functools import wraps
 
 import akshare as ak
@@ -16,10 +17,30 @@ from fastapi.responses import JSONResponse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collector")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时单线程预热一次 V8（py_mini_racer）。
+
+    akshare 部分端点（东财净值 / 雪球详情）每次调用新建 MiniRacer 实例，
+    并发下首次初始化 V8 会触发 address_pool_manager 竞争直接崩溃（实测 SIGTRAP）；
+    启动时先初始化一次，后续并发的实例创建不再竞争平台初始化。
+    """
+    try:
+        import py_mini_racer
+
+        py_mini_racer.MiniRacer()
+        logger.info("py_mini_racer warmed up")
+    except Exception as e:
+        logger.warning(f"py_mini_racer warmup failed (concurrent akshare calls may crash): {e}")
+    yield
+
+
 app = FastAPI(
     title="FundForge Collector Service",
     description="akshare 数据采集服务，为 Go 后端提供标准化 HTTP 接口",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 
@@ -106,12 +127,17 @@ def df_to_response(df: pd.DataFrame, mapping_key: str = None) -> list[dict]:
 
 
 def akshare_call(func):
-    """统一 akshare 调用包装：异常捕获 + 计时日志。"""
+    """统一 akshare 调用包装：异常捕获 + 计时日志。
+
+    必须保持同步函数：akshare 调用是阻塞 IO，若用 async def 包装，
+    FastAPI 会把端点放在事件循环上直接执行，阻塞期间所有请求被串行化；
+    同步端点才由 FastAPI 放入线程池并发执行。
+    """
     @wraps(func)
-    async def wrapper(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         start = time.time()
         try:
-            result = await func(*args, **kwargs) if callable(getattr(func, '__wrapped__', None)) else func(*args, **kwargs)
+            result = func(*args, **kwargs)
             elapsed = (time.time() - start) * 1000
             logger.info(f"{func.__name__} OK ({elapsed:.0f}ms)")
             return result

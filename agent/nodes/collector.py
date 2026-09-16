@@ -7,10 +7,14 @@
 
 结构：`_collect_fund` 返回结构化 `FundCollectionResult`（无副作用），
 由 `CollectorNode.__call__` 统一合并进 State。
+
+并发：基金之间、单基金内的 3 个 Tool 之间均无依赖，按 limits.py 的上限并发执行；
+结果按 fund_ids 顺序与固定 Tool 顺序合并，Evidence / ToolCallRecord 顺序保持确定。
 """
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict
@@ -20,6 +24,7 @@ from domain.fund import Fund, FundPerformance, FundSummary, summarize_fund
 from domain.plan import ResearchPlan
 from domain.shared import DataQuality
 from langchain_core.tools import BaseTool
+from limits import COLLECTOR_FUND_CONCURRENCY, COLLECTOR_TOOL_CONCURRENCY
 from state import FundForgeState
 from store import FundStore
 from tools.fund_tools import FundTools
@@ -166,7 +171,10 @@ class CollectorNode:
                 ],
             }
 
-        results = [self._collect_fund(code) for code in fund_ids]
+        # 基金间并发采集；pool.map 保证结果顺序与 fund_ids 一致
+        workers = min(COLLECTOR_FUND_CONCURRENCY, len(fund_ids))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(self._collect_fund, fund_ids))
         collected = {
             "fund_ids": fund_ids,
             "funds_summary": [r.summary for r in results if r.summary is not None],
@@ -194,20 +202,18 @@ class CollectorNode:
         """采集单只基金：info + performance + holdings，失败降级并记录问题。"""
         result = FundCollectionResult(fund_id=code)
 
-        fund, info_record = record_tool_call(
-            self._tools.get_fund_info, {"fund_id": code}
-        )
-        result.tool_calls.append(info_record)
+        # 同一基金的 3 个 Tool 相互独立，并发执行；结果按固定顺序取回，保证记录顺序稳定
+        with ThreadPoolExecutor(max_workers=COLLECTOR_TOOL_CONCURRENCY) as pool:
+            info_future = pool.submit(record_tool_call, self._tools.get_fund_info, {"fund_id": code})
+            perf_future = pool.submit(record_tool_call, self._tools.get_fund_performance, {"fund_id": code})
+            holdings_future = pool.submit(
+                record_tool_call, self._tools.get_fund_holdings, {"fund_id": code}
+            )
+            fund, info_record = info_future.result()
+            perf, perf_record = perf_future.result()
+            holdings, holdings_record = holdings_future.result()
 
-        perf, perf_record = record_tool_call(
-            self._tools.get_fund_performance, {"fund_id": code}
-        )
-        result.tool_calls.append(perf_record)
-
-        holdings, holdings_record = record_tool_call(
-            self._tools.get_fund_holdings, {"fund_id": code}
-        )
-        result.tool_calls.append(holdings_record)
+        result.tool_calls.extend([info_record, perf_record, holdings_record])
 
         if not info_record.success and not perf_record.success:
             result.issues.append(f"{code}: 基金数据获取完全失败")

@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from domain.thesis import InvestmentThesis
+from limits import LLM_MAX_TOKENS
 from llm.base import LLMError, Message
 from llm.openai_compat import OpenAICompatProvider
 
@@ -52,6 +53,33 @@ class TestOpenAICompatProvider:
 
         provider.generate([Message("user", "hi")])
         assert "response_format" not in seen["payload"]
+
+    def test_max_tokens_cap_sent(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "{}"}}]},
+            )
+
+        _provider(handler).generate([Message("user", "hi")])
+        assert seen["payload"]["max_tokens"] == LLM_MAX_TOKENS
+
+    def test_truncated_output_raises_llm_error(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": '{"summary":'}, "finish_reason": "length"}
+                    ]
+                },
+            )
+
+        with pytest.raises(LLMError, match="truncated"):
+            _provider(handler).generate([Message("user", "hi")])
 
     def test_http_error_wrapped_as_llm_error(self):
         def handler(request: httpx.Request) -> httpx.Response:
