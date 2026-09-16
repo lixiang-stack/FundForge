@@ -35,6 +35,10 @@ from tools.fund_tools import make_fund_tools
 
 MAX_REPAIR_ITERATIONS = 1  # §13 CostLimits.max_repair_iterations
 
+# 区分「未传 llm（按环境变量构建）」与「显式 llm=None（无 LLM，Thesis 降级）」：
+# None 不能兼任两种语义，否则测试在配置了 LLM_* 环境变量的机器上会打出真实请求
+_UNSET = object()
+
 
 def _route_after_plan(state: FundForgeState) -> str:
     """planner 之后的路由：无 fund_ids 时短路跳过 collector。"""
@@ -57,18 +61,18 @@ def _route_after_evaluation(state: FundForgeState) -> str:
 def build_graph(
     client: CollectorClient | None = None,
     store: FundStore | None = None,
-    llm: LLMProvider | None = None,
+    llm: LLMProvider | None | object = _UNSET,
     tracer: RunTracer | None = None,
 ):
     """构建并编译 FundForge V1 Graph。
 
-    client / store / llm / tracer 可注入（测试用）；llm 缺省时按环境变量构建
-    （LLM_BASE_URL / LLM_API_KEY / LLM_MODEL），未配置则 Thesis 节点降级。
+    client / store / llm / tracer 可注入（测试用）；llm 未传时按环境变量构建
+    （LLM_BASE_URL / LLM_API_KEY / LLM_MODEL），显式传 None 表示无 LLM（Thesis 降级）。
     tracer 记录每个节点的输入/输出摘要，供可观测性 sink 持久化。
     """
     store = store or FundStore()
     client = client or CollectorClient()
-    llm = llm if llm is not None else make_default_llm()
+    llm = make_default_llm() if llm is _UNSET else llm
     tracer = tracer or RunTracer()
     tracer.llm_model = getattr(llm, "model", None)
     tools = make_fund_tools(client, store)
