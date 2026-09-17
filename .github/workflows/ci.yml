@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# 同一分支有新推送时取消仍在跑的旧 CI，省执行额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    name: agent / pytest + eval（离线）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: agent/uv.lock
+      - name: Sync dependencies
+        run: uv sync --directory agent
+      - name: Run tests
+        run: uv run --directory agent pytest -q
+      - name: Run eval suite (offline)
+        run: uv run --directory agent python -m eval
+
+  # server 暂不生效：需要时整体取消注释
+  # server:
+  #   name: server / go build + vet + test
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 15
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #     - uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: go.mod
+  #     - name: Build
+  #       run: go build ./...
+  #     - name: Vet
+  #       run: go vet ./...
+  #     - name: Test
+  #       run: go test ./... -count=1
