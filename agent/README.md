@@ -53,6 +53,7 @@ router → planner → collector → analyzer → researcher → thesis → eval
 ├── analysis/        # 确定性量化分析引擎（engine.py）
 ├── domain/          # 领域模型（fund/plan/analysis/evidence/thesis/evaluation/report）
 ├── llm/             # LLM Provider（base.py + openai_compat.py，OpenAI 兼容）
+├── eval/            # 评测集（Phase 10）：Case 定义 + 硬检查 + Runner
 ├── observability/   # RunTracer + TraceSink（Langfuse / JSONL / Null / Multi）
 ├── docs/            # 设计文档（ConceptDesign / Plan / TechnicalContract）
 └── tests/           # 单元测试（mock collector）+ 集成测试（-m integration）
@@ -113,6 +114,25 @@ uv run pytest -m integration     # 集成测试：真实 collector 数据 + 失�
 ```
 
 集成测试默认跳过（`pyproject.toml` 的 `addopts`），需要 `docker compose up -d collector` 后显式指定 `-m integration`。
+
+---
+
+## 评测集（Phase 10）
+
+评测集 = 给 Agent 的单元测试 + 集成测试（`eval/`），不是给报告打分的主观比赛。Case 为「输入 + 执行档位 + 机器可判定检查点」，检查口径与 Evaluator 对齐（Evidence 绑定、覆盖率、data_gaps 披露、免责声明）。
+
+```bash
+uv run python -m eval                    # offline：mock collector + fake LLM（确定性，CI 可跑）
+uv run python -m eval --mode live        # live：真实 collector + 真实 LLM（质量门，需服务与 LLM_* 配置）
+uv run python -m eval --tag smoke        # 只跑 smoke 层
+uv run python -m eval --case research_single_normal  # 只跑指定 Case
+uv run python -m eval --list             # 列出全部 Case
+```
+
+- **Case 定义**在 `eval/cases.py`（Python dict，无 YAML 依赖），分 offline（10 个）与 live（2 个）两档；每个 Case 的 `note` 说明它防什么回归
+- **检查点**在 `eval/checks.py` 注册表（19 个硬检查）；Case 引用未注册检查名会判失败（fail fast）
+- **Langfuse 结合**：配置 `LANGFUSE_*` 时，每次评测的 trace 自动上传，检查结果以 scores（`eval_pass` / `checks_passed_ratio` / `claim_coverage_ratio` / `data_gaps_ok`）回写对应 trace，失败时点开 trace 即调试现场
+- offline 全量 Case 同时作为 pytest 回归常驻：`uv run pytest tests/test_eval_suite.py`（原 `test_regression_baseline.py` 基线口径已迁移为 Case `research_standard_three_fund`）
 
 ---
 

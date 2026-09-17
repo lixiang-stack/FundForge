@@ -290,6 +290,25 @@ class LangfuseTraceSink:
             trace_id=self._client.create_trace_id(seed=request_id)
         )
 
+    def score_run(self, request_id: str, scores: dict[str, float | bool]) -> None:
+        """评测集打分（Phase 10）：按 request_id 派生 trace_id 显式提交，不依赖 live 上下文。
+
+        单条打分失败仅告警（可观测性降级设计），不中断评测主流程。
+        """
+        trace_id = self._client.create_trace_id(seed=request_id)
+        for name, value in scores.items():
+            try:
+                if isinstance(value, bool):
+                    self._client.create_score(
+                        trace_id=trace_id, name=name, value=value, data_type="BOOLEAN"
+                    )
+                else:
+                    self._client.create_score(
+                        trace_id=trace_id, name=name, value=float(value), data_type="NUMERIC"
+                    )
+            except Exception as e:  # noqa: BLE001 —— 打分失败不影响评测
+                logger.warning("eval score %s=%s write failed: %s", name, value, e)
+
     def shutdown(self) -> None:
         self._client.shutdown()
 
