@@ -9,7 +9,7 @@
     - 终端（精简）：只打印最终报告 + 文件路径；
     - 运行记录：output/<request_id>.md（分析过程在前、最终报告在后，失败也写入）；
     - 日志：log/<request_id>.log（INFO 全量；控制台仅 WARNING 以上）；
-    - Trace：配置 LANGFUSE_* 时同步写入 Langfuse，TRACE_FILE 写本地 JSONL。
+    - Trace：本地 JSONL 恒写 output/runs.jsonl；配置 LANGFUSE_* 时同步写入 Langfuse。
 
 Trace 完整性：
     - 节点失败时仍写入失败节点（duration + error），运行级错误记入 RunTrace.error；
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from domain.evidence import LlmInteraction
 from domain.report import Report, render_markdown
-from domain.shared import coerce_model
+from domain.shared import coerce_model, to_json_text
 from graph import build_graph
 from observability import RunTracer, find_jsonl_sink, find_langfuse_sink, find_live_sink, make_default_trace_sink
 from observability.models import RunTrace
@@ -54,14 +54,6 @@ def _setup_logging(request_id: str) -> Path:
     root.setLevel(logging.INFO)
     root.handlers = [file_handler, console_handler]
     return log_path
-
-
-def _dump(obj) -> str:
-    """模型 / dict / 其他统一转 JSON 文本（运行记录用）。"""
-    dump = getattr(obj, "model_dump_json", None)
-    if callable(dump):
-        return dump()
-    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 def _write_trace(tracer: RunTracer, state: dict, sink: TraceSink, error: str | None = None) -> RunTrace:
@@ -122,7 +114,7 @@ def _write_run_output(
         lines.append("")
 
         lines += ["### 1.2 Tool 调用", ""]
-        lines += [f"- {_dump(t)}" for t in state.get("tool_calls", [])]
+        lines += [f"- {to_json_text(t)}" for t in state.get("tool_calls", [])]
         lines.append("")
 
         lines += ["### 1.3 LLM 输入 / 输出", ""]
@@ -151,7 +143,7 @@ def _write_run_output(
             ]
 
         lines += ["### 1.4 证据", ""]
-        lines += [f"- {_dump(e)}" for e in state.get("evidence", [])]
+        lines += [f"- {to_json_text(e)}" for e in state.get("evidence", [])]
         lines.append("")
 
         lines += ["### 1.5 数据质量问题与评估", ""]
@@ -160,7 +152,7 @@ def _write_run_output(
         lines.append("")
         evaluation = state.get("evaluation")
         if evaluation is not None:
-            lines += [f"评估：{_dump(evaluation)}", ""]
+            lines += [f"评估：{to_json_text(evaluation)}", ""]
         repair_actions = state.get("repair_actions", []) or []
         if repair_actions:
             lines += [f"- 修复动作: {action}" for action in repair_actions]
