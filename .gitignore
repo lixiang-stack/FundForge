@@ -27,5 +27,8 @@ __pycache__/
 # local debug captures
 /agent/log
 
+# Agent local run outputs (运行记录 markdown)
+/agent/output/
+
 # Agent local trace files (TRACE_FILE)
 /agent/traces/

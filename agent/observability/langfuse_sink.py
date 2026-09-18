@@ -9,20 +9,22 @@
 - 最终 Report 元数据 / 运行错误 → 根 span 输出（v4 中根 observation 的 IO 即 trace 级 IO；
   `set_current_trace_io` 已弃用，不再使用）
 
+本地 JSONL Trace 恒写入 agent/output/runs.jsonl（DEFAULT_TRACE_FILE）；
 未配置 LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY 时，
-make_default_trace_sink 返回 NullTraceSink（不影响功能）。
+make_default_trace_sink 仅含本地文件 Sink（不影响功能）。
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from langfuse import Langfuse
 
-from config import langfuse_host, langfuse_public_key, langfuse_secret_key, trace_file_path
+from config import langfuse_host, langfuse_public_key, langfuse_secret_key
 from domain.evidence import ToolCallRecord
-from observability.file_sink import JsonlTraceSink
+from observability.file_sink import DEFAULT_TRACE_FILE, JsonlTraceSink
 from observability.models import GenerationTrace, NodeChild, NodeTrace, RunTrace
-from observability.sink import MultiTraceSink, NullTraceSink, TraceSink, find_sink
+from observability.sink import MultiTraceSink, TraceSink, find_sink
 
 logger = logging.getLogger(__name__)
 
@@ -313,15 +315,14 @@ class LangfuseTraceSink:
         self._client.shutdown()
 
 
-def make_default_trace_sink() -> TraceSink:
-    """按环境变量构建 TraceSink。
+def make_default_trace_sink(trace_file: str | Path | None = None) -> TraceSink:
+    """构建默认 TraceSink：本地 JSONL 恒启用（缺省 output/runs.jsonl）。
 
-    - LANGFUSE_* 配置齐全 → LangfuseTraceSink
-    - TRACE_FILE 配置 → JsonlTraceSink（本地 JSONL，离线分析）
-    - 两者都配置 → MultiTraceSink 扇出
-    - 都未配置 → NullTraceSink（不影响功能）
+    - 本地 JSONL → JsonlTraceSink（trace_file 可覆盖路径，测试用）
+    - LANGFUSE_* 配置齐全 → 追加 LangfuseTraceSink（MultiTraceSink 扇出）
+    - Langfuse 配置部分缺失或初始化失败 → 仅本地 JSONL（不影响功能）
     """
-    sinks: list[TraceSink] = []
+    sinks: list[TraceSink] = [JsonlTraceSink(str(trace_file or DEFAULT_TRACE_FILE))]
 
     host, public_key, secret_key = langfuse_host(), langfuse_public_key(), langfuse_secret_key()
     if host and public_key and secret_key:
@@ -341,15 +342,6 @@ def make_default_trace_sink() -> TraceSink:
         ]
         logger.warning("langfuse partially configured, disabled; missing: %s", ", ".join(missing))
 
-    trace_file = trace_file_path()
-    if trace_file:
-        sinks.append(JsonlTraceSink(trace_file))
-
-    if not sinks:
-        logger.warning(
-            "no trace sink configured (LANGFUSE_* / TRACE_FILE), tracing disabled"
-        )
-        return NullTraceSink()
     if len(sinks) == 1:
         return sinks[0]
     return MultiTraceSink(sinks)

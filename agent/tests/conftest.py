@@ -1,5 +1,7 @@
 """测试公共夹具：用 httpx.MockTransport 模拟 collector service 响应。"""
 
+from datetime import datetime
+
 import httpx
 import pytest
 
@@ -8,6 +10,8 @@ from tools.collector_client import CollectorClient
 from tools.fund_tools import make_fund_tools
 
 FUND_CODE = "519770"
+# akshare 持仓的季度原文格式（如"2026年1季度股票投资明细"）；用当前年避免触发时效披露
+_QUARTER = f"{datetime.now().year}年1季度股票投资明细"
 
 DETAIL_ROWS = [
     {"item": "基金代码", "value": FUND_CODE},
@@ -26,8 +30,8 @@ UNIT_ROWS = [
 ]
 
 HOLDINGS_ROWS = [
-    {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 3.12, "report_date": "2025-06-30"},
-    {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": "2025-06-30"},
+    {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 3.12, "report_date": _QUARTER},
+    {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": _QUARTER},
 ]
 
 ACC_ROWS = [

@@ -42,6 +42,7 @@ class Report(BaseModel):
 
     executive_summary: str
     fund_overview: list[FundSummary] = Field(default_factory=list)
+    holdings_analysis: str | None = None
     performance_analysis: str = ""
     risk_analysis: str = ""
     peer_comparison: str | None = None
@@ -93,6 +94,8 @@ def render_markdown(report: Report) -> str:
             )
         lines.append("")
 
+    if report.holdings_analysis:
+        lines += ["## 持仓概览（最新报告期前十大）", report.holdings_analysis, ""]
     if report.performance_analysis:
         lines += ["## 业绩分析", report.performance_analysis, ""]
     if report.risk_analysis:

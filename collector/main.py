@@ -7,6 +7,7 @@ FundForge Collector Service - akshare 数据采集薄包装层
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from functools import wraps
 
 import akshare as ak
@@ -256,11 +257,32 @@ def get_dividend_rank():
 
 # ---- Stock Holdings ----
 
+def _holdings_df(fetch, code: str, date: str | None) -> pd.DataFrame:
+    """持仓数据获取：未显式指定年份时取「最新可用披露」（当前年 → 回退上一年）。
+
+    akshare 持仓接口按年返回全年四个季度明细；年初新一年度报告未披露时当前年
+    返回空，回退上一年避免拿到空数据。显式指定年份时不回退，尊重调用方语义。
+    """
+    year = date or str(datetime.now().year)
+    if date is not None:
+        return fetch(symbol=code, date=year)
+    prev = str(datetime.now().year - 1)
+    try:
+        df = fetch(symbol=code, date=year)
+    except Exception:
+        logger.warning(f"holdings {code} {year} failed, fallback to {prev}")
+        return fetch(symbol=code, date=prev)
+    if df is None or df.empty:
+        logger.info(f"holdings {code} {year} empty, fallback to {prev}")
+        return fetch(symbol=code, date=prev)
+    return df
+
+
 @app.get("/api/funds/{code}/holdings/stock")
 @akshare_call
-def get_stock_holdings(code: str, date: str = Query("2024", description="年份")):
+def get_stock_holdings(code: str, date: str | None = Query(None, description="年份，缺省取最新可用披露")):
     """基金股票持仓"""
-    df = ak.fund_portfolio_hold_em(symbol=code, date=date)
+    df = _holdings_df(ak.fund_portfolio_hold_em, code, date)
     return df_to_response(df, "stock_holding")
 
 
@@ -268,9 +290,9 @@ def get_stock_holdings(code: str, date: str = Query("2024", description="年份"
 
 @app.get("/api/funds/{code}/holdings/bond")
 @akshare_call
-def get_bond_holdings(code: str, date: str = Query("2024", description="年份")):
+def get_bond_holdings(code: str, date: str | None = Query(None, description="年份，缺省取最新可用披露")):
     """基金债券持仓"""
-    df = ak.fund_portfolio_bond_hold_em(symbol=code, date=date)
+    df = _holdings_df(ak.fund_portfolio_bond_hold_em, code, date)
     return df_to_response(df, "bond_holding")
 
 

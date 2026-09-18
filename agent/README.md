@@ -73,6 +73,13 @@ uv run python main.py "对比 015453 和 519770 的表现"
 
 LLM 未配置时工作流仍可运行：thesis 节点优雅降级（无论点、记录问题），其余节点不受影响。配置后启用完整论点生成。
 
+### 本地运行输出（均不入库，已在 .gitignore）
+
+每次运行落盘两个文件，文件名均为 `request_id`：
+
+- `output/<request_id>.md`：运行记录——分析过程在前（节点轨迹、Tool 调用、**LLM 输入/输出全文**、证据、数据质量与评估），最终报告 Markdown 在最后；失败运行也会尽力写入已产出内容。
+- `log/<request_id>.log`：全量 INFO 日志；终端只打印最终报告与上述文件路径（WARNING 以上同步到终端）。
+
 ---
 
 ## 配置（env-only）
@@ -83,8 +90,7 @@ LLM 未配置时工作流仍可运行：thesis 节点优雅降级（无论点、
 | `COLLECTOR_TIMEOUT_S` | Collector 请求超时（秒） | `120` |
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | 论点生成 LLM（OpenAI 兼容 chat/completions，如 DeepSeek） | 未配置 → thesis 降级 |
 | `LLM_TIMEOUT_S` | LLM 请求超时（秒） | `120` |
-| `LANGFUSE_HOST`（或 `LANGFUSE_BASE_URL`）/ `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse 追踪 | 未配置 → 关闭 |
-| `TRACE_FILE` | 本地 JSONL Trace 文件路径，每行一次运行 | 未配置 → 关闭 |
+| `LANGFUSE_HOST`（或 `LANGFUSE_BASE_URL`）/ `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse 追踪 | 未配置 → 仅本地 JSONL |
 
 ---
 
@@ -93,16 +99,16 @@ LLM 未配置时工作流仍可运行：thesis 节点优雅降级（无论点、
 每次运行的完整 Trace（节点 span、Tool 调用、Token 用量、评估得分、报告元数据）可同时写入两个目标（扇出）：
 
 - **Langfuse**：live tracing——节点 span 在真实执行时创建/关闭，时间线与嵌套即真实执行顺序；trace id 由 `request_id` 派生，可回溯。
-- **本地 JSONL**（`TRACE_FILE`，如 `agent/traces/runs.jsonl`）：每行一个 `RunTrace`，供离线分析。
+- **本地 JSONL**（恒启用，`output/runs.jsonl`，与运行记录同目录、均不入库）：每行一个 `RunTrace`，供离线分析。
 
 ```bash
-TRACE_FILE=agent/traces/runs.jsonl uv run python main.py "分析基金 519770"
+uv run python main.py "分析基金 519770"
 
 # 用 jq 提取节点耗时
-jq -r '.nodes[] | [.node, .duration_ms] | @tsv' agent/traces/runs.jsonl
+jq -r '.nodes[] | [.node, .duration_ms] | @tsv' output/runs.jsonl
 ```
 
-两者均未配置时降级为 NullTraceSink（仅控制台），不影响功能。trace 丢失不能拖垮研究主流程——"故障只 log、降级不影响业务"是刻意设计，**业务代码不得模仿它吞业务错误**。
+本地 JSONL 恒启用，Langfuse 未配置时仅写本地文件，不影响功能。trace 丢失不能拖垮研究主流程——"故障只 log、降级不影响业务"是刻意设计，**业务代码不得模仿它吞业务错误**。
 
 ---
 

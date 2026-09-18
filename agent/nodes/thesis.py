@@ -17,9 +17,9 @@ from typing import TypedDict
 
 from pydantic import ValidationError
 
-from domain.evidence import Evidence, TokenUsage
+from domain.evidence import Evidence, LlmInteraction, TokenUsage
 from domain.thesis import Claim, ClaimType, InvestmentThesis, Strength
-from domain.shared import to_jsonable
+from domain.shared import coerce_model, to_jsonable
 from limits import (
     THESIS_MAX_CLAIMS,
     THESIS_MAX_ITEM_CHARS,
@@ -83,11 +83,17 @@ def build_thesis_prompt(state: FundForgeState) -> list[Message]:
     return [Message("system", _SYSTEM_PROMPT), Message("user", user_prompt)]
 
 
+def _prompt_text(messages: list[Message]) -> str:
+    """把 messages 展开为可读全文（本地运行记录用）。"""
+    return "\n\n".join(f"[{m.role}]\n{m.content}" for m in messages)
+
+
 class ThesisOutput(TypedDict, total=False):
     """Thesis 节点输出（§4：claims, investment_thesis；data_quality_issues 记录降级）。"""
 
     claims: list[Claim]
     investment_thesis: InvestmentThesis
+    llm_interactions: list[LlmInteraction]
     data_quality_issues: list[str]
     token_usage: TokenUsage
 
@@ -113,11 +119,17 @@ class ThesisNode:
             return self._degrade(state, "无可用 Evidence，跳过投资论点生成")
 
         usage = self._current_usage(state)
+        interactions = [
+            coerce_model(i, LlmInteraction)
+            for i in (state.get("llm_interactions") or [])
+        ]
+        model_name = getattr(self._llm, "model", None)
+        messages = build_thesis_prompt(state)
+        prompt_text = _prompt_text(messages)
+        response_text: str | None = None
         try:
-            response = self._llm.generate(
-                build_thesis_prompt(state),
-                structured_output=InvestmentThesis,
-            )
+            response = self._llm.generate(messages, structured_output=InvestmentThesis)
+            response_text = response.content
             usage = usage.merged(
                 TokenUsage(
                     input_tokens=response.input_tokens,
@@ -128,7 +140,31 @@ class ThesisNode:
             thesis = InvestmentThesis.model_validate_json(response.content)
         except (LLMError, ValidationError, ValueError) as e:
             logger.error("thesis generation failed: %s", e)
-            return self._degrade(state, f"投资论点生成失败：{e}", token_usage=usage)
+            interactions.append(
+                LlmInteraction(
+                    node="thesis",
+                    model=model_name,
+                    prompt=prompt_text,
+                    response=response_text,
+                    ok=False,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
+            return self._degrade(
+                state, f"投资论点生成失败：{e}", token_usage=usage, llm_interactions=interactions
+            )
+
+        interactions.append(
+            LlmInteraction(
+                node="thesis",
+                model=model_name,
+                prompt=prompt_text,
+                response=response_text,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                ok=True,
+            )
+        )
 
         valid_ids = {e.id for e in evidence}
         valid_claims: list[Claim] = []
@@ -178,6 +214,7 @@ class ThesisNode:
         return ThesisOutput(
             claims=list(thesis.claims),
             investment_thesis=thesis,
+            llm_interactions=interactions,
             data_quality_issues=all_issues,
             token_usage=usage,
         )
@@ -188,6 +225,7 @@ class ThesisNode:
         reason: str,
         extra_issues: list[str] | None = None,
         token_usage: TokenUsage | None = None,
+        llm_interactions: list[LlmInteraction] | None = None,
     ) -> ThesisOutput:
         """Thesis 失败时降级：不产出论点，记录 issue，不中断工作流。"""
         logger.warning("thesis degraded: %s", reason)
@@ -200,6 +238,8 @@ class ThesisNode:
         )
         if token_usage is not None:
             output["token_usage"] = token_usage
+        if llm_interactions is not None:
+            output["llm_interactions"] = llm_interactions
         return output
 
     @staticmethod

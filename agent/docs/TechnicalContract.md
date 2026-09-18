@@ -103,6 +103,7 @@ class FundForgeState(TypedDict, total=False):
     evidence: list[Evidence]
     claims: list[Claim]
     investment_thesis: InvestmentThesis
+    llm_interactions: list[LlmInteraction]    # LLM 输入/输出全文（本地运行记录用，Trace 只存摘要）
 
     # === Evaluation & Control ===
     evaluation: EvaluationResult
@@ -299,7 +300,8 @@ def get_fund_info(fund_id: str) -> Fund: ...
 def get_fund_performance(fund_id: str, start_date: date, end_date: date) -> FundPerformance: ...
 
 @tool
-def get_fund_holdings(fund_id: str, as_of: date | None = None) -> list[Holding]: ...
+def get_fund_holdings(fund_id: str, year: str | None = None) -> list[Holding]:
+    """year 缺省时由 collector 取「最新可用披露」（当前年，空则回退上一年）。"""
 
 @tool
 def get_fund_manager(fund_id: str) -> FundManager: ...
@@ -500,6 +502,7 @@ class Report(BaseModel):
 
     executive_summary: str
     fund_overview: list[FundSummary]
+    holdings_analysis: str | None            # 持仓概览（最新报告期前十大，确定性模板）
     performance_analysis: str
     risk_analysis: str
     peer_comparison: str | None

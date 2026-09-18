@@ -1,8 +1,9 @@
-"""跨领域共享原语：枚举类型与 State 归一化助手。
+"""跨领域共享原语：枚举类型、State 归一化与序列化助手。
 
 对应 Go 侧 internal/domain/shared 的职责定位。
 """
 
+import json
 from enum import StrEnum
 from typing import Any, TypeVar
 
@@ -37,4 +38,15 @@ def to_jsonable(value: Any) -> Any:
     return value.model_dump(mode="json")
 
 
-__all__ = ["DataQuality", "coerce_model", "to_jsonable"]
+def to_json_text(value: Any) -> str:
+    """任意值 → JSON 文本：Pydantic 模型走 model_dump_json，dict/其他走 json.dumps。
+
+    用于运行记录等展示场景（模型与 dict 混排的 State 值统一渲染）。
+    """
+    dump = getattr(value, "model_dump_json", None)
+    if callable(dump):
+        return dump()
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+__all__ = ["DataQuality", "coerce_model", "to_jsonable", "to_json_text"]

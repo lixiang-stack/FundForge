@@ -20,7 +20,15 @@ from datetime import datetime
 from typing import Any, TypedDict
 
 from domain.evidence import Evidence, EvidenceType, ToolCallRecord
-from domain.fund import Fund, FundPerformance, FundSummary, summarize_fund
+from domain.fund import (
+    Fund,
+    FundPerformance,
+    FundSummary,
+    latest_report_period,
+    parse_report_period,
+    summarize_fund,
+    top_holdings,
+)
 from domain.plan import ResearchPlan
 from domain.shared import DataQuality
 from langchain_core.tools import BaseTool
@@ -116,24 +124,34 @@ def performance_evidence(perf: FundPerformance) -> Evidence:
 def holdings_evidence(code: str, holdings: list, failed: bool) -> Evidence:
     """股票持仓 → fund_data 类型 Evidence（空持仓属正常披露，仅质量降级）。
 
-    value 携带前 5 大持仓摘要，供 Thesis 提示词直接引用；完整数据在 Store。
+    value 携带最新报告期的前十大持仓摘要，供 Thesis 提示词直接引用；完整数据在 Store。
     """
+    period = latest_report_period(holdings)
     top = [
         {"stock_name": h.stock_name, "hold_ratio": h.hold_ratio}
-        for h in holdings[:5]
+        for h in top_holdings(holdings)
     ]
     quality = (
         DataQuality.MISSING
         if failed or not holdings
         else DataQuality.COMPLETE
     )
+    detail = f"股票持仓：{len(holdings)} 条"
+    if period:
+        detail += f"（最新报告期 {period}）"
     return Evidence(
         id=f"ev-{uuid.uuid4().hex[:12]}",
         evidence_type=EvidenceType.FUND_DATA,
         source=_FUND_HOLDINGS_SOURCE.format(code=code),
-        source_detail=f"股票持仓：{len(holdings)} 条",
+        source_detail=detail,
         as_of=datetime.now(),
-        value={"fund_id": code, "holding_count": len(holdings), "top_holdings": top, "failed": failed},
+        value={
+            "fund_id": code,
+            "holding_count": len(holdings),
+            "latest_report_period": period,
+            "top_holdings": top,
+            "failed": failed,
+        },
         data_quality=quality,
         raw_ref=FundStore.holdings_ref(code),
     )
@@ -242,6 +260,14 @@ class CollectorNode:
             result.issues.append(f"{code}: 股票持仓获取失败（get_fund_holdings 失败）")
         elif holdings_failure:
             logger.info("holdings: %s 无股票持仓披露（非股票型基金属正常）", code)
+
+        # 持仓时效披露：报告期早于当前年即记 issue，经 data_quality_issues →
+        # thesis.data_gaps 强制进入报告「数据缺口与局限」，杜绝拿旧持仓当最新数据用
+        if holdings_record.success and holdings:
+            period = latest_report_period(holdings)
+            parsed = parse_report_period(period)
+            if parsed and parsed[0] < datetime.now().year:
+                result.issues.append(f"{code}: 股票持仓最新报告期为 {period}，非当前年度披露")
 
         if fund is not None:
             result.summary = summarize_fund(fund)

@@ -17,7 +17,7 @@ from typing import TypedDict
 
 from domain.analysis import AnalysisResult
 from domain.evaluation import EvaluationResult
-from domain.evidence import Evidence, ToolCallRecord
+from domain.evidence import Evidence, LlmInteraction, ToolCallRecord
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report
@@ -52,6 +52,7 @@ class FundForgeState(TypedDict, total=False):
     # === Thesis 产出 ===
     claims: list[Claim]
     investment_thesis: InvestmentThesis
+    llm_interactions: list[LlmInteraction]
 
     # === Researcher 产出 ===
     research_items: list[ResearchItem]

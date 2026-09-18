@@ -4,11 +4,14 @@
 data_quality 与 as_of，用于数据质量传递与披露。
 """
 
+import re
 from datetime import date, datetime
 
 from pydantic import BaseModel
 
 from domain.shared import DataQuality
+
+_QUARTER_RE = re.compile(r"(\d{4})年(\d{1,2})季度")
 
 
 class NAVPoint(BaseModel):
@@ -98,6 +101,35 @@ def summarize_fund(fund: Fund) -> FundSummary:
     )
 
 
+def parse_report_period(raw: str | None) -> tuple[int, int] | None:
+    """解析报告期字符串（akshare 季度原文，如"2024年1季度股票投资明细"）→ (年, 季度)。"""
+    if not raw:
+        return None
+    m = _QUARTER_RE.search(str(raw))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def latest_report_period(holdings: list["Holding"]) -> str | None:
+    """持仓中最新的报告期原文；无可解析报告期时返回 None（不编造）。"""
+    best: tuple[tuple[int, int], str] | None = None
+    for h in holdings:
+        parsed = parse_report_period(h.report_date)
+        if parsed and (best is None or parsed > best[0]):
+            best = (parsed, h.report_date)
+    return best[1] if best else None
+
+
+def top_holdings(holdings: list["Holding"], n: int = 10) -> list["Holding"]:
+    """最新报告期内按占净值比例降序的前 n 条（None 排最后）。
+
+    akshare 按季度分块返回全年持仓，直接取前 n 条会混入最早季度，
+    必须先锁定最新报告期再排序。
+    """
+    period = latest_report_period(holdings)
+    rows = [h for h in holdings if period is None or h.report_date == period]
+    return sorted(rows, key=lambda h: (h.hold_ratio is None, -(h.hold_ratio or 0.0)))[:n]
+
+
 def quality_of(*fields: object) -> DataQuality:
     """根据关键字段缺失情况推导 data_quality：全缺 missing，部分缺 partial，否则 complete。"""
     present = [f is not None for f in fields]
@@ -115,5 +147,8 @@ __all__ = [
     "FundSummary",
     "FundPerformance",
     "summarize_fund",
+    "parse_report_period",
+    "latest_report_period",
+    "top_holdings",
     "quality_of",
 ]

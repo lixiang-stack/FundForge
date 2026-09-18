@@ -312,29 +312,38 @@ class TestLangfuseSink:
         sink, _ = self._sink()
         assert sink.trace_url("req123") == "https://langfuse.test/trace/trace-req123"
 
-    def test_default_sink_degrades_when_unconfigured(self, monkeypatch):
-        for var in ("LANGFUSE_HOST", "LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "TRACE_FILE"):
-            monkeypatch.delenv(var, raising=False)
-        assert isinstance(make_default_trace_sink(), NullTraceSink)
+    def test_default_sink_local_jsonl_when_unconfigured(self, monkeypatch, tmp_path):
+        # 本地 JSONL 恒启用：Langfuse 未配置时仅含文件 Sink
+        from observability.file_sink import JsonlTraceSink
 
-    def test_default_sink_accepts_base_url_alias(self, monkeypatch):
+        for var in ("LANGFUSE_HOST", "LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        sink = make_default_trace_sink(trace_file=tmp_path / "runs.jsonl")
+        assert isinstance(sink, JsonlTraceSink)
+
+    def test_default_sink_accepts_base_url_alias(self, monkeypatch, tmp_path):
+        from observability.langfuse_sink import find_langfuse_sink
+        from observability.sink import MultiTraceSink
+
         monkeypatch.delenv("LANGFUSE_HOST", raising=False)
         monkeypatch.setenv("LANGFUSE_BASE_URL", "https://jp.cloud.langfuse.com")
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
-        monkeypatch.delenv("TRACE_FILE", raising=False)
-        assert isinstance(make_default_trace_sink(), LangfuseTraceSink)
+        sink = make_default_trace_sink(trace_file=tmp_path / "runs.jsonl")
+        assert isinstance(sink, MultiTraceSink)
+        assert isinstance(find_langfuse_sink(sink), LangfuseTraceSink)
 
-    def test_default_sink_degrades_when_langfuse_client_fails(self, monkeypatch):
-        # Langfuse client 构造失败（如配置被 SDK 拒绝）→ 降级为 NullTraceSink，不影响业务
+    def test_default_sink_degrades_when_langfuse_client_fails(self, monkeypatch, tmp_path):
+        # Langfuse client 构造失败（如配置被 SDK 拒绝）→ 降级为仅本地 JSONL，不影响业务
         import observability.langfuse_sink as lf
+        from observability.file_sink import JsonlTraceSink
 
         monkeypatch.setenv("LANGFUSE_HOST", "https://langfuse.test")
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
-        monkeypatch.delenv("TRACE_FILE", raising=False)
         monkeypatch.setattr(lf, "Langfuse", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("bad config")))
-        assert isinstance(make_default_trace_sink(), NullTraceSink)
+        sink = make_default_trace_sink(trace_file=tmp_path / "runs.jsonl")
+        assert isinstance(sink, JsonlTraceSink)
 
 
 class TestTracerInGraph:
@@ -425,20 +434,11 @@ class TestMultiSink:
         monkeypatch.setenv("LANGFUSE_HOST", "https://jp.cloud.langfuse.com")
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
-        monkeypatch.setenv("TRACE_FILE", str(tmp_path / "runs.jsonl"))
 
-        sink = make_default_trace_sink()
+        sink = make_default_trace_sink(trace_file=tmp_path / "runs.jsonl")
         assert isinstance(sink, MultiTraceSink)
         assert isinstance(find_langfuse_sink(sink), LangfuseTraceSink)
         assert isinstance(find_jsonl_sink(sink), JsonlTraceSink)
-
-    def test_default_sink_file_only(self, monkeypatch, tmp_path):
-        from observability import JsonlTraceSink
-
-        for var in ("LANGFUSE_HOST", "LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-            monkeypatch.delenv(var, raising=False)
-        monkeypatch.setenv("TRACE_FILE", str(tmp_path / "runs.jsonl"))
-        assert isinstance(make_default_trace_sink(), JsonlTraceSink)
 
 
 class TestLangfuseLiveMode:
