@@ -7,7 +7,7 @@
     uv run python -m eval --case research_single_normal
 
 输出：每个 Case 一行 PASS / FAIL / SKIP（含失败检查明细），末尾汇总；有 FAIL 时退出码 1。
-配置 LANGFUSE_* 时检查结果作为 scores 写入对应 trace；配置 TRACE_FILE 时同写本地 JSONL。
+配置 LANGFUSE_* 时检查结果作为 scores 写入对应 trace；本地 JSONL 恒写 output/runs.jsonl。
 """
 
 import argparse

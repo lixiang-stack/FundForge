@@ -48,11 +48,6 @@ def langfuse_secret_key() -> str:
     return os.getenv("LANGFUSE_SECRET_KEY", "")
 
 
-def trace_file_path() -> str:
-    """本地 JSONL Trace 文件路径（TRACE_FILE）；空表示不启用。"""
-    return os.getenv("TRACE_FILE", "")
-
-
 __all__ = [
     "collector_base_url",
     "collector_timeout_seconds",
@@ -63,5 +58,4 @@ __all__ = [
     "langfuse_host",
     "langfuse_public_key",
     "langfuse_secret_key",
-    "trace_file_path",
 ]
