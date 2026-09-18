@@ -108,6 +108,66 @@ class TestReportStructure:
         assert report.key_claims[0].claim_type == "peer"
 
 
+class TestReportLabelsAndHoldings:
+    """P1：业绩/风险/对比章节标注基金；P2：持仓概览章节。"""
+
+    def test_performance_and_risk_labeled_with_primary_fund(self):
+        report = SynthesizerNode()(_base_state())["report"]
+        assert "519770 交银优择回报A（主体基金）" in report.performance_analysis
+        assert "519770 交银优择回报A（主体基金）" in report.risk_analysis
+
+    def test_peer_rows_labeled_with_fund_names(self):
+        analysis = {
+            **_base_state()["analysis"],
+            "peer_comparison": {
+                "base_fund_id": "519770",
+                "rows": [
+                    {"fund_id": "519770", "annualized_return": 0.18, "annual_volatility": 0.17,
+                     "max_drawdown": -0.29, "sharpe": 1.13},
+                    {"fund_id": "000001", "annualized_return": 0.05, "annual_volatility": 0.10,
+                     "max_drawdown": -0.15, "sharpe": 0.50},
+                ],
+            },
+        }
+        state = _base_state(analysis=analysis)
+        state["funds_summary"].append(
+            {"id": "000001", "name": "华夏成长混合", "as_of": "2026-09-11T12:00:00", "data_quality": "complete"}
+        )
+        report = SynthesizerNode()(state)["report"]
+        assert "519770 交银优择回报A" in report.peer_comparison
+        assert "000001 华夏成长混合" in report.peer_comparison
+
+    def test_holdings_overview_rendered(self):
+        evidence = [
+            {
+                "id": "ev-h1",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/holdings/stock",
+                "value": {
+                    "fund_id": "519770",
+                    "holding_count": 12,
+                    "latest_report_period": "2026年2季度股票投资明细",
+                    "top_holdings": [
+                        {"stock_name": "贵州茅台", "hold_ratio": 3.12},
+                        {"stock_name": "宁德时代", "hold_ratio": 2.85},
+                    ],
+                    "failed": False,
+                },
+            }
+        ]
+        report = SynthesizerNode()(_base_state(evidence=evidence))["report"]
+        assert report.holdings_analysis is not None
+        assert "519770 交银优择回报A" in report.holdings_analysis
+        assert "报告期 2026年2季度股票投资明细" in report.holdings_analysis
+        assert "贵州茅台 3.12%" in report.holdings_analysis
+        assert "## 持仓概览（最新报告期前十大）" in render_markdown(report)
+
+    def test_no_holdings_no_section(self):
+        report = SynthesizerNode()(_base_state())["report"]
+        assert report.holdings_analysis is None
+        assert "持仓概览" not in render_markdown(report)
+
+
 class TestMarkdownRendering:
     def test_render_markdown_contains_core_sections(self):
         thesis = _thesis(

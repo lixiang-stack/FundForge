@@ -80,9 +80,10 @@ class SynthesizerNode:
             request_id=state.get("request_id", ""),
             executive_summary=_executive_summary(primary, summaries, analysis, thesis),
             fund_overview=summaries,
-            performance_analysis=_performance_text(analysis),
-            risk_analysis=_risk_text(analysis),
-            peer_comparison=_peer_text(analysis),
+            holdings_analysis=_holdings_text(summaries, evidence),
+            performance_analysis=_performance_text(primary, analysis),
+            risk_analysis=_risk_text(primary, analysis),
+            peer_comparison=_peer_text(analysis, summaries),
             manager_analysis=(
                 f"{primary.id} 现任基金经理：{primary.manager_name}。"
                 if primary and primary.manager_name
@@ -147,42 +148,81 @@ def _executive_summary(
     return " ".join(lines)
 
 
-def _performance_text(analysis: AnalysisResult | None) -> str:
+def _fund_label(fund_id: str, names: dict[str, str]) -> str:
+    """「代码 名称」标签；名称缺失时退回纯代码。"""
+    name = names.get(fund_id)
+    return f"{fund_id} {name}" if name else fund_id
+
+
+def _performance_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> str:
     if analysis is None:
         return ""
     perf = analysis.performance
+    subject = f"{primary.id} {primary.name}（主体基金）：" if primary else ""
     return (
-        f"区间 {perf.period_start} ~ {perf.period_end}（{perf.nav_point_count} 个净值点），"
+        f"{subject}区间 {perf.period_start} ~ {perf.period_end}"
+        f"（{perf.nav_point_count} 个净值点），"
         f"累计收益 {_fmt_pct(perf.cumulative_return)}，年化收益 {_fmt_pct(perf.annualized_return)}。"
     )
 
 
-def _risk_text(analysis: AnalysisResult | None) -> str:
+def _risk_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> str:
     if analysis is None:
         return ""
     risk = analysis.risk
     sharpe = f"{risk.sharpe:.2f}" if risk.sharpe is not None else "未知"
+    subject = f"{primary.id} {primary.name}（主体基金）：" if primary else ""
     return (
-        f"年化波动率 {_fmt_pct(risk.annual_volatility)}，"
+        f"{subject}年化波动率 {_fmt_pct(risk.annual_volatility)}，"
         f"最大回撤 {_fmt_pct(risk.max_drawdown)}，"
         f"夏普比率 {sharpe}。"
     )
 
 
-def _peer_text(analysis: AnalysisResult | None) -> str | None:
+def _peer_text(analysis: AnalysisResult | None, summaries: list[FundSummary] | None = None) -> str | None:
     if analysis is None or analysis.peer_comparison is None:
         return None
     pc = analysis.peer_comparison
-    lines = [f"基准基金 {pc.base_fund_id}："]
+    names = {s.id: s.name for s in (summaries or [])}
+    lines = [f"基准基金 {_fund_label(pc.base_fund_id, names)}："]
     for row in pc.rows:
         sharpe = f"{row.sharpe:.2f}" if row.sharpe is not None else "未知"
         lines.append(
-            f"- {row.fund_id}: 年化收益 {_fmt_pct(row.annualized_return)}，"
+            f"- {_fund_label(row.fund_id, names)}: 年化收益 {_fmt_pct(row.annualized_return)}，"
             f"年化波动 {_fmt_pct(row.annual_volatility)}，"
             f"最大回撤 {_fmt_pct(row.max_drawdown)}，夏普 {sharpe}"
         )
     lines.append("注：各基金指标已对齐至共同区间（最短历史为准，最长 10 年）计算，口径一致。")
     return "\n".join(lines)
+
+
+def _holdings_text(summaries: list[FundSummary], evidence: list) -> str | None:
+    """持仓概览（确定性模板）：从 holdings evidence 汇总各基金最新报告期前十大。"""
+    by_fund: dict[str, dict] = {}
+    for e in evidence:
+        value = e.get("value") if isinstance(e, dict) else getattr(e, "value", None)
+        if not isinstance(value, dict) or not value.get("top_holdings"):
+            continue
+        fund_id = value.get("fund_id")
+        if fund_id:
+            by_fund[fund_id] = value
+    if not by_fund:
+        return None
+    lines = []
+    for s in summaries:
+        data = by_fund.get(s.id)
+        if data is None:
+            continue
+        period = data.get("latest_report_period")
+        period_label = f"（报告期 {period}）" if period else ""
+        items = "、".join(
+            f"{h.get('stock_name')} {h.get('hold_ratio'):.2f}%"
+            if h.get("hold_ratio") is not None
+            else str(h.get("stock_name"))
+            for h in data["top_holdings"]
+        )
+        lines.append(f"- **{s.id} {s.name}**{period_label}：{items}")
+    return "\n".join(lines) if lines else None
 
 
 __all__ = ["SynthesizerNode", "SynthesizerOutput", "render_markdown"]

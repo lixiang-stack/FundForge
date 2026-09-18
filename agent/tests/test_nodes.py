@@ -2,6 +2,7 @@
 
 import threading
 import time
+from datetime import datetime
 
 import httpx
 
@@ -196,6 +197,56 @@ class TestCollectorNode:
             assert [s.id for s in out["funds_summary"]] == [FUND_CODE, "000001"]
             # 并发不改变记录顺序：先第一只基金的 3 次调用，再第二只
             assert [t.arguments["fund_id"] for t in out["tool_calls"]] == [FUND_CODE] * 3 + ["000001"] * 3
+        finally:
+            client.close()
+
+    def test_holdings_evidence_latest_period_and_top10(self):
+        year = datetime.now().year
+        rows = [
+            # 旧季度行：不得混入 top_holdings
+            {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 9.9,
+             "report_date": f"{year - 1}年4季度股票投资明细"},
+            # 最新报告期 12 行：验证取前 10 且按权重降序
+            *[
+                {"stock_code": f"{i:06d}", "stock_name": f"s{i}", "hold_ratio": float(i),
+                 "report_date": f"{year}年1季度股票投资明细"}
+                for i in range(12)
+            ],
+        ]
+        tools, store, client = make_tools(holdings_rows=rows)
+        node = CollectorNode(tools)
+        try:
+            state = {
+                "user_query": f"分析基金 {FUND_CODE}",
+                "research_plan": {"task_type": "fund_research", "fund_ids": [FUND_CODE], "notes": []},
+            }
+            out = node(state)
+
+            holdings_ev = [e for e in out["evidence"] if "holdings" in e.source][0]
+            assert holdings_ev.value["latest_report_period"] == f"{year}年1季度股票投资明细"
+            assert f"最新报告期 {year}年1季度" in holdings_ev.source_detail
+            top = holdings_ev.value["top_holdings"]
+            assert len(top) == 10
+            assert top[0]["stock_name"] == "s11"  # 最新季度内权重最高
+            assert all(h["stock_name"] != "贵州茅台" for h in top)
+        finally:
+            client.close()
+
+    def test_stale_holdings_report_period_raises_issue(self):
+        tools, store, client = make_tools(
+            holdings_rows=[
+                {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 1.0,
+                 "report_date": "2020年1季度股票投资明细"},
+            ]
+        )
+        node = CollectorNode(tools)
+        try:
+            state = {
+                "user_query": f"分析基金 {FUND_CODE}",
+                "research_plan": {"task_type": "fund_research", "fund_ids": [FUND_CODE], "notes": []},
+            }
+            out = node(state)
+            assert any("非当前年度披露" in i for i in out["data_quality_issues"])
         finally:
             client.close()
 
