@@ -68,4 +68,20 @@ class TokenUsage(BaseModel):
         )
 
 
-__all__ = ["Evidence", "EvidenceType", "ToolCallRecord", "TokenUsage"]
+class LlmInteraction(BaseModel):
+    """一次 LLM 调用的完整输入/输出记录（本地运行记录用，Trace 只存摘要）。
+
+    prompt/response 保留全文：output/*.md 需要完整回溯大模型的输入与输出。
+    """
+
+    node: str
+    model: str | None = None
+    prompt: str
+    response: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    ok: bool = True
+    error: str | None = None
+
+
+__all__ = ["Evidence", "EvidenceType", "ToolCallRecord", "TokenUsage", "LlmInteraction"]

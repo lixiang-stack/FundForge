@@ -151,6 +151,43 @@ class TestThesisNode:
         out = ThesisNode(FakeLLMProvider(LLMError("boom")))(_state())
         assert any("投资论点生成失败" in i for i in out["data_quality_issues"])
 
+    def test_success_records_llm_interaction(self):
+        thesis = _thesis(
+            [Claim(id="c1", statement="回撤可控", claim_type="risk", evidence_ids=[EV1], strength="strong")]
+        )
+        out = ThesisNode(FakeLLMProvider(thesis))(_state())
+
+        interactions = out["llm_interactions"]
+        assert len(interactions) == 1
+        it = interactions[0]
+        assert it.ok is True
+        assert it.node == "thesis"
+        assert "[system]" in it.prompt and "[user]" in it.prompt
+        assert "概要" in it.response
+
+    def test_llm_error_records_interaction(self):
+        out = ThesisNode(FakeLLMProvider(LLMError("boom")))(_state())
+
+        assert "investment_thesis" not in out
+        it = out["llm_interactions"][0]
+        assert it.ok is False
+        assert "boom" in it.error
+        assert "[user]" in it.prompt  # 失败时输入全文仍保留，便于回溯
+        assert it.response is None
+
+    def test_existing_interactions_are_appended_not_replaced(self):
+        thesis = _thesis(
+            [Claim(id="c1", statement="s", claim_type="risk", evidence_ids=[EV1], strength="strong")]
+        )
+        state = _state() | {
+            "llm_interactions": [
+                {"node": "other", "prompt": "p", "response": "r", "ok": True},
+            ]
+        }
+        out = ThesisNode(FakeLLMProvider(thesis))(state)
+        assert len(out["llm_interactions"]) == 2
+        assert out["llm_interactions"][0].node == "other"
+
     def test_unconfigured_llm_degrades(self):
         out = ThesisNode(None)(_state())
         assert any("LLM 未配置" in i for i in out["data_quality_issues"])
