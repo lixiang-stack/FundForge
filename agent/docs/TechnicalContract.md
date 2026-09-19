@@ -344,7 +344,6 @@ class FundSummary(BaseModel):
     id: str
     name: str
     fund_type: str
-    category: str
     aum: float | None
     manager_name: str | None
     as_of: datetime
@@ -358,13 +357,19 @@ class FundSummary(BaseModel):
 class Fund(BaseModel):
     id: str
     name: str
-    fund_type: str
-    category: str
-    manager_id: str | None
+    full_name: str | None              # 基金全称
+    fund_type: str | None
+    manager_name: str | None
+    company: str | None
+    custodian: str | None              # 托管银行
     benchmark: str | None
     inception_date: date | None
     aum: float | None
     currency: str
+    rating_agency: str | None
+    rating: str | None
+    investment_strategy: str | None
+    investment_objective: str | None
     source: str
     as_of: datetime
     data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"
@@ -380,8 +385,6 @@ class FundPerformance(BaseModel):
     volatility: float
     max_drawdown: float
     sharpe: float | None
-    sortino: float | None
-    benchmark_return: float | None
     source: str
     as_of: datetime
     data_quality: Literal["complete", "partial", "stale", "missing"] = "complete"

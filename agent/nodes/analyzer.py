@@ -11,7 +11,7 @@ import uuid
 from typing import TypedDict
 from datetime import datetime, timedelta
 
-from analysis import compute_fund_metrics, nav_value
+from analysis import compute_fund_metrics
 from domain.analysis import (
     AnalysisResult,
     FundMetrics,
@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _ANALYSIS_SOURCE = "fundforge:analysis-engine"
 _ALIGNMENT_MAX_DAYS = 365 * 10   # 对齐窗口上限：10 年
 _MIN_ALIGNMENT_DAYS = 30         # 低于该窗口的对比无统计意义
+_POINT_COUNT_DIFF_TOLERANCE = 0.01  # 同窗口净值点数差容忍度，超过即向下游披露
 
 
 def _aligned_window(series: dict[str, list]) -> tuple | None:
@@ -40,7 +41,7 @@ def _aligned_window(series: dict[str, list]) -> tuple | None:
     """
     spans = []
     for points in series.values():
-        valid = [p for p in points if nav_value(p) is not None]
+        valid = [p for p in points if p.has_value]
         if len(valid) >= 2:
             spans.append((valid[0].nav_date, valid[-1].nav_date))
     if len(spans) < 2:
@@ -94,13 +95,35 @@ class AnalyzerNode:
 
         # 对比场景：全部基金按对齐区间重算（主基金指标与对比表口径一致）；
         # 单基金：按其自身全历史计算
-        metrics_by_fund: dict[str, FundMetrics] = {}
-        for fid in fund_ids:
+        def _window_points(fid: str) -> list:
             points = self._store.get_nav_series(fid)
             if alignment is not None:
                 start, end = alignment
-                points = [p for p in points if start <= p.nav_date <= end]
-            metrics_by_fund[fid] = compute_fund_metrics(points)
+                return [p for p in points if start <= p.nav_date <= end]
+            return points
+
+        metrics_by_fund: dict[str, FundMetrics] = {
+            fid: compute_fund_metrics(_window_points(fid)) for fid in fund_ids
+        }
+        if len(fund_ids) > 1 and len({m.nav_basis for m in metrics_by_fund.values()}) > 1:
+            # 对比基金口径必须一致：任一基金 acc 覆盖不全，全组拉回 unit 口径重算
+            issues.append("净值口径不一致（部分基金累计净值覆盖不全），已统一按单位净值口径对比")
+            metrics_by_fund = {
+                fid: compute_fund_metrics(_window_points(fid), basis="unit")
+                for fid in fund_ids
+            }
+
+        # 对齐窗口只统一端点、不统一逐日覆盖：各基金披露频率不同（如新基金建仓期
+        # 按周披露）或数据源缺行都会造成同窗口点数差，指标横向对比口径偏松，须披露
+        if len(fund_ids) > 1 and alignment is not None:
+            counts = {fid: m.nav_point_count for fid, m in metrics_by_fund.items()}
+            hi, lo = max(counts.values()), min(counts.values())
+            if lo > 0 and (hi - lo) / lo > _POINT_COUNT_DIFF_TOLERANCE:
+                detail = ", ".join(f"{fid}={cnt}" for fid, cnt in counts.items())
+                issues.append(
+                    f"多基金对比：同窗口内净值点数差超{_POINT_COUNT_DIFF_TOLERANCE:.0%}"
+                    f"（{detail}），各基金逐日覆盖不一致，指标横向对比需谨慎"
+                )
 
         analysis = self._build_analysis(primary_id, fund_ids, metrics_by_fund)
         evidence = self._build_evidence(fund_ids, metrics_by_fund, alignment)
@@ -190,6 +213,7 @@ class AnalyzerNode:
                         "annual_volatility": m.annual_volatility,
                         "max_drawdown": m.max_drawdown,
                         "sharpe": m.sharpe,
+                        "nav_basis": m.nav_basis,
                         "alignment_window": [str(alignment[0]), str(alignment[1])] if alignment else None,
                     },
                     data_quality=m.data_quality,

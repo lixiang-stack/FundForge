@@ -22,6 +22,14 @@ class NAVPoint(BaseModel):
     acc_nav: float | None = None
     daily_return: float | None = None
 
+    @property
+    def has_value(self) -> bool:
+        """点有效性（口径无关）：单位净值或累计净值至少一个非空。
+
+        对齐窗口端点检测与净值口径选择共用同一判定，避免各处内联重复。
+        """
+        return self.unit_nav is not None or self.acc_nav is not None
+
 
 class Holding(BaseModel):
     """股票持仓（原始事实，存放于外部 Store）。"""
@@ -37,15 +45,19 @@ class Fund(BaseModel):
 
     id: str
     name: str
+    full_name: str | None = None
     fund_type: str | None = None
-    category: str | None = None
-    manager_id: str | None = None
     manager_name: str | None = None
     company: str | None = None
+    custodian: str | None = None                   # 托管银行
     benchmark: str | None = None
     inception_date: date | None = None
     aum: float | None = None                       # 单位：亿元
     currency: str = "CNY"
+    rating_agency: str | None = None
+    rating: str | None = None
+    investment_strategy: str | None = None
+    investment_objective: str | None = None
     source: str
     as_of: datetime
     data_quality: DataQuality = DataQuality.COMPLETE
@@ -57,7 +69,6 @@ class FundSummary(BaseModel):
     id: str
     name: str
     fund_type: str | None = None
-    category: str | None = None
     aum: float | None = None
     manager_name: str | None = None
     as_of: datetime
@@ -80,8 +91,6 @@ class FundPerformance(BaseModel):
     volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
-    sortino: float | None = None
-    benchmark_return: float | None = None
     source: str
     as_of: datetime
     data_quality: DataQuality = DataQuality.COMPLETE
@@ -93,7 +102,6 @@ def summarize_fund(fund: Fund) -> FundSummary:
         id=fund.id,
         name=fund.name,
         fund_type=fund.fund_type,
-        category=fund.category,
         aum=fund.aum,
         manager_name=fund.manager_name,
         as_of=fund.as_of,

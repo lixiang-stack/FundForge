@@ -7,7 +7,6 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from domain.fund import FundSummary
 from domain.shared import DataQuality
 
 
@@ -61,6 +60,7 @@ class FundMetrics(BaseModel):
     annual_volatility: float | None = None
     max_drawdown: float | None = None
     sharpe: float | None = None
+    nav_basis: str | None = None                   # 净值口径："acc" | "unit"
     data_quality: DataQuality = DataQuality.COMPLETE
 
 
