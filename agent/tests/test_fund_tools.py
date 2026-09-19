@@ -12,12 +12,19 @@ class TestGetFundInfo:
 
         assert fund.id == FUND_CODE
         assert fund.name == "交银优择回报A"
+        assert fund.full_name == "交银施罗德优择回报灵活配置混合型证券投资基金"
         assert fund.fund_type == "混合型-灵活配置"
         assert fund.manager_name == "周珊珊 高扬"
         assert fund.company == "交银施罗德基金公司"
+        assert fund.custodian == "中信银行股份有限公司"
+        assert fund.benchmark == "50%×沪深300指数收益率+50%×中债综合全价指数收益率"
         assert fund.inception_date == date(2016, 4, 22)
         assert fund.aum == 44.16
         assert fund.currency == "CNY"
+        assert fund.rating_agency is None
+        assert fund.rating == "暂无评级"
+        assert fund.investment_strategy is not None
+        assert fund.investment_objective is not None
         assert fund.data_quality == "complete"
         assert fund.source.endswith(f"/api/funds/{FUND_CODE}/detail")
         assert fund.as_of is not None
@@ -82,6 +89,25 @@ class TestGetFundPerformance:
         assert perf.period_end == date(2020, 1, 2)
         assert perf.nav_point_count == 1
         assert len(store.get_nav_series(FUND_CODE)) == 1
+
+    def test_duplicate_nav_dates_are_deduped(self):
+        # akshare 偶发同日重复行：虚增点数并在收益序列插入伪收益，必须按日期去重
+        unit_rows = [
+            {"nav_date": "2024-01-02", "unit_nav": 1.0, "daily_return": 0.0},
+            {"nav_date": "2024-01-03", "unit_nav": 1.1, "daily_return": 1.0},
+            {"nav_date": "2024-01-03", "unit_nav": 1.2, "daily_return": 0.9},
+            {"nav_date": "2024-01-04", "unit_nav": 1.21, "daily_return": 0.1},
+        ]
+        tools, store, client = make_tools(unit_rows=unit_rows)
+        try:
+            perf = tools.get_fund_performance.invoke({"fund_id": FUND_CODE})
+            assert perf.nav_point_count == 3
+            assert perf.period_start == date(2024, 1, 2)
+            assert perf.period_end == date(2024, 1, 4)
+            points = store.get_nav_series(FUND_CODE)
+            assert [p.unit_nav for p in points] == [1.0, 1.2, 1.21]  # 同日保留末行
+        finally:
+            client.close()
 
     def test_empty_series_marks_missing(self):
         tools, _, client = make_tools(unit_rows=[], acc_rows=[])

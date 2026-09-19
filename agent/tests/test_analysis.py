@@ -115,14 +115,18 @@ class TestSharpe:
 
 
 class TestNavValue:
-    def test_prefers_acc(self):
-        assert nav_value(_point("2024-01-01", unit=1.0, acc=1.5)) == 1.5
+    def test_acc_basis_returns_acc(self):
+        assert nav_value(_point("2024-01-01", unit=1.0, acc=1.5), "acc") == 1.5
 
-    def test_falls_back_to_unit(self):
-        assert nav_value(_point("2024-01-01", unit=1.0)) == 1.0
+    def test_acc_basis_missing_acc_is_none(self):
+        # 指定 acc 口径时缺失即无效点，不做逐点回退
+        assert nav_value(_point("2024-01-01", unit=1.0), "acc") is None
+
+    def test_unit_basis_returns_unit(self):
+        assert nav_value(_point("2024-01-01", unit=1.0, acc=1.5), "unit") == 1.0
 
     def test_both_none(self):
-        assert nav_value(_point("2024-01-01")) is None
+        assert nav_value(_point("2024-01-01"), "unit") is None
 
 
 class TestComputeFundMetrics:
@@ -133,7 +137,8 @@ class TestComputeFundMetrics:
             _point("2024-01-01", unit=1.1, acc=1.21),
         ]
         m = compute_fund_metrics(points)
-        # nav_value 优先 acc：序列 [1.0, 1.3, 1.21]
+        # acc 全覆盖 → acc 口径：序列 [1.0, 1.3, 1.21]
+        assert m.nav_basis == "acc"
         assert m.period_start == date(2023, 1, 1)
         assert m.period_end == date(2024, 1, 1)
         assert m.nav_point_count == 3
@@ -164,3 +169,55 @@ class TestComputeFundMetrics:
         m = compute_fund_metrics(points)
         assert m.nav_point_count == 2
         assert m.data_quality == "complete"
+
+
+class TestComputeFundMetricsBasis:
+    def test_auto_full_acc_coverage_uses_acc(self):
+        points = [
+            _point("2023-01-01", unit=1.0, acc=1.0),
+            _point("2024-01-01", unit=1.2, acc=1.44),
+        ]
+        m = compute_fund_metrics(points)
+        assert m.nav_basis == "acc"
+        assert m.cumulative_return == pytest.approx(0.44)
+
+    def test_auto_partial_acc_falls_back_to_unit_whole_series(self):
+        # acc 部分缺失 → 整序列回退 unit，不与 acc 逐点混用
+        points = [
+            _point("2023-01-01", unit=1.0),
+            _point("2024-01-01", unit=1.2, acc=1.5),
+        ]
+        m = compute_fund_metrics(points)
+        assert m.nav_basis == "unit"
+        assert m.cumulative_return == pytest.approx(0.2)
+
+    def test_forced_unit_ignores_acc(self):
+        points = [
+            _point("2023-01-01", unit=1.0, acc=1.0),
+            _point("2024-01-01", unit=1.2, acc=1.5),
+        ]
+        m = compute_fund_metrics(points, basis="unit")
+        assert m.nav_basis == "unit"
+        assert m.cumulative_return == pytest.approx(0.2)
+
+    def test_auto_acc_covered_despite_unit_gaps(self):
+        # acc 全覆盖（部分点 unit 缺失）→ acc 口径，这些点仍有效
+        points = [
+            _point("2023-01-01", acc=1.0),
+            _point("2024-01-01", unit=1.2, acc=1.5),
+        ]
+        m = compute_fund_metrics(points)
+        assert m.nav_basis == "acc"
+        assert m.nav_point_count == 2
+        assert m.data_quality == "complete"
+
+    def test_acc_only_points_dropped_under_forced_unit(self):
+        # 强制 unit 口径时，仅 acc 存在的点为无效点
+        points = [
+            _point("2023-01-01", acc=1.0),
+            _point("2024-01-01", unit=1.2, acc=1.5),
+        ]
+        m = compute_fund_metrics(points, basis="unit")
+        assert m.nav_basis == "unit"
+        assert m.nav_point_count == 1
+        assert m.data_quality == "partial"

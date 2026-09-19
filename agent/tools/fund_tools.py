@@ -90,18 +90,30 @@ def make_fund_tools(client: CollectorClient, store: FundStore) -> FundTools:
         manager_name = _optional_str(kv.get("基金经理"))
         inception = _parse_date(_optional_str(kv.get("成立时间")))
         aum = _parse_aum(_optional_str(kv.get("最新规模") or kv.get("基金规模")))
-        benchmark = _optional_str(kv.get("业绩基准"))
+        benchmark = _optional_str(kv.get("业绩比较基准"))
         company = _optional_str(kv.get("基金公司"))
+        full_name = _optional_str(kv.get("基金全称"))
+        custodian = _optional_str(kv.get("托管银行"))
+        rating_agency = _optional_str(kv.get("评级机构"))
+        rating = _optional_str(kv.get("基金评级"))
+        investment_strategy = _optional_str(kv.get("投资策略"))
+        investment_objective = _optional_str(kv.get("投资目标"))
 
         fund = Fund(
             id=fund_id,
             name=name or "",
+            full_name=full_name,
             fund_type=fund_type,
             manager_name=manager_name,
             company=company,
+            custodian=custodian,
             benchmark=benchmark,
             inception_date=inception,
             aum=aum,
+            rating_agency=rating_agency,
+            rating=rating,
+            investment_strategy=investment_strategy,
+            investment_objective=investment_objective,
             source=_FUND_DETAIL_SOURCE.format(code=fund_id),
             as_of=datetime.now(),
             # detail 为空时关键字段全为 None → missing，无需单独分支
@@ -135,7 +147,9 @@ def make_fund_tools(client: CollectorClient, store: FundStore) -> FundTools:
                     daily_return=r.get("daily_return"),
                 )
             )
-        points.sort(key=lambda p: p.nav_date)
+        # akshare 单位净值走势偶发重复日期行：虚增 nav_point_count 并在收益序列插入伪收益；
+        # 与 acc_by_date 字典语义一致，同日保留末行
+        points = sorted({p.nav_date: p for p in points}.values(), key=lambda p: p.nav_date)
 
         if start_date:
             start = _parse_date(start_date)

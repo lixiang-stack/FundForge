@@ -2,7 +2,9 @@
 
 简化口径（V1，全部在此显式声明）：
 - 收益序列：r_t = v_t / v_{t-1} - 1（简单收益，非对数收益）；
-- 净值取值：优先 acc_nav（累计净值，近似反映分红），缺失时回退 unit_nav；
+- 净值口径：整个序列统一取 acc_nav（累计净值）或 unit_nav，不逐点混用；
+  acc 在有效点内全覆盖时用 acc，否则整序列回退 unit。
+  已知简化：累计净值为分红简单加总（非复权、不含分红再投资）；
 - 年化收益：(1 + cumulative) ** (365 / 区间自然日) - 1，区间不足 30 个自然日不年化；
 - 年化波动：日收益总体标准差（pstdev）* sqrt(252)；
 - 最大回撤：max(v_t / run_max - 1)，结果 ≤ 0（无回撤时为 0.0）；
@@ -22,9 +24,15 @@ DAYS_PER_YEAR = 365
 _MIN_DAYS_FOR_ANNUALIZATION = 30
 
 
-def nav_value(point: NAVPoint) -> float | None:
-    """单点净值取值：优先累计净值，回退单位净值。"""
-    return point.acc_nav if point.acc_nav is not None else point.unit_nav
+def nav_value(point: NAVPoint, basis: str) -> float | None:
+    """指定口径下的单点净值；该口径缺失即为无效点，不做逐点回退（避免口径混用）。"""
+    return point.acc_nav if basis == "acc" else point.unit_nav
+
+
+def _select_basis(points: list[NAVPoint]) -> str:
+    """序列级净值口径：有效点 acc 全覆盖用 acc，否则整序列回退 unit。"""
+    valid = [p for p in points if p.has_value]
+    return "acc" if valid and all(p.acc_nav is not None for p in valid) else "unit"
 
 
 def simple_returns(values: list[float]) -> list[float]:
@@ -94,9 +102,13 @@ def _quality_of(n_valid: int) -> DataQuality:
     return DataQuality.COMPLETE
 
 
-def compute_fund_metrics(points: list[NAVPoint]) -> FundMetrics:
-    """对单只基金的净值序列计算全部指标（Engine 的组合入口）。"""
-    valid = [(p, v) for p in points if (v := nav_value(p)) is not None]
+def compute_fund_metrics(points: list[NAVPoint], basis: str = "auto") -> FundMetrics:
+    """对单只基金的净值序列计算全部指标（Engine 的组合入口）。
+
+    basis："acc" / "unit" 显式指定口径；"auto" 为 acc 全覆盖则 acc，否则整序列 unit。
+    """
+    chosen = basis if basis in ("acc", "unit") else _select_basis(points)
+    valid = [(p, v) for p in points if (v := nav_value(p, chosen)) is not None]
     navs = [v for _, v in valid]
     returns = simple_returns(navs)
 
@@ -113,6 +125,7 @@ def compute_fund_metrics(points: list[NAVPoint]) -> FundMetrics:
         annual_volatility=annualized_volatility(returns),
         max_drawdown=max_drawdown(navs),
         sharpe=sharpe_ratio(returns),
+        nav_basis=chosen,
         data_quality=_quality_of(len(navs)),
     )
 
