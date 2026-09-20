@@ -85,19 +85,20 @@ def make_fund_tools(client: CollectorClient, store: FundStore) -> FundTools:
         """获取基金基本信息（名称、类型、规模、基金经理等），只返回事实。"""
         rows = client.get_fund_detail(fund_id)
         kv = {str(r.get("item")): r.get("value") for r in rows}
-        name = _optional_str(kv.get("基金名称"))
-        fund_type = _optional_str(kv.get("基金类型"))
-        manager_name = _optional_str(kv.get("基金经理"))
-        inception = _parse_date(_optional_str(kv.get("成立时间")))
-        aum = _parse_aum(_optional_str(kv.get("最新规模") or kv.get("基金规模")))
-        benchmark = _optional_str(kv.get("业绩比较基准"))
-        company = _optional_str(kv.get("基金公司"))
-        full_name = _optional_str(kv.get("基金全称"))
-        custodian = _optional_str(kv.get("托管银行"))
-        rating_agency = _optional_str(kv.get("评级机构"))
-        rating = _optional_str(kv.get("基金评级"))
-        investment_strategy = _optional_str(kv.get("投资策略"))
-        investment_objective = _optional_str(kv.get("投资目标"))
+        # 键名为 collector FIELD_MAPS["fund_detail"] 标准化后的英文 item
+        name = _optional_str(kv.get("fund_name"))
+        fund_type = _optional_str(kv.get("fund_type"))
+        manager_name = _optional_str(kv.get("fund_manager"))
+        inception = _parse_date(_optional_str(kv.get("inception_date")))
+        aum = _parse_aum(_optional_str(kv.get("aum")))
+        benchmark = _optional_str(kv.get("benchmark"))
+        company = _optional_str(kv.get("fund_company"))
+        full_name = _optional_str(kv.get("fund_full_name"))
+        custodian = _optional_str(kv.get("custodian_bank"))
+        rating_agency = _optional_str(kv.get("rating_agency"))
+        rating = _optional_str(kv.get("fund_rating"))
+        investment_strategy = _optional_str(kv.get("investment_strategy"))
+        investment_objective = _optional_str(kv.get("investment_objective"))
 
         fund = Fund(
             id=fund_id,

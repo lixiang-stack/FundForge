@@ -106,16 +106,17 @@ func convertFundDetail(raw []fundDetailJSON) *marketdata.FundDetail {
 	for _, r := range raw {
 		kv[str(r.Item)] = str(r.Value)
 	}
-	detail.Name = kv["基金名称"]
-	detail.FundType = kv["基金类型"]
-	detail.Company = kv["基金公司"]
-	detail.Manager = kv["基金经理"]
-	detail.CustodianBank = kv["托管银行"]
-	detail.Benchmark = kv["业绩基准"]
-	if v, ok := kv["基金规模"]; ok {
+	// 键名对齐 collector FIELD_MAPS["fund_detail"] 的英文 item 输出
+	detail.Name = kv["fund_name"]
+	detail.FundType = kv["fund_type"]
+	detail.Company = kv["fund_company"]
+	detail.Manager = kv["fund_manager"]
+	detail.CustodianBank = kv["custodian_bank"]
+	detail.Benchmark = kv["benchmark"]
+	if v, ok := kv["aum"]; ok {
 		detail.Size = parseFloatFromStr(v)
 	}
-	if v, ok := kv["成立时间"]; ok {
+	if v, ok := kv["inception_date"]; ok {
 		t := parseDate(v)
 		if !t.IsZero() {
 			detail.EstablishDate = &t

@@ -129,6 +129,8 @@ export DATABASE_URL="postgres://fundforge:fundforge_dev_password@localhost:5432/
 | Search funds by code/name/pinyin | ./client fund search 519770      | -                    | fund_info |
 | List subscribed funds            | ./client fund list               | -                    | fund_info |
 
+> The `/api/funds/%s/detail` response is normalized by the collector's FIELD_MAPS ACL (`collector/main.py`): item names are English (`fund_name`, `aum`, ...), Chinese items are no longer passed through.
+
 ### Data synchronization
 
 | Commands                                        | example                  | collector api                            | table                              |
