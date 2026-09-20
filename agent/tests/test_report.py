@@ -168,6 +168,168 @@ class TestReportLabelsAndHoldings:
         assert "持仓概览" not in render_markdown(report)
 
 
+class TestComparisonReport:
+    """对比任务一等公民：标题对称、章节逐基金、核心指标表格、持仓对比小节。"""
+
+    def _comparison_state(self, **overrides) -> dict:
+        state = {
+            "request_id": "req-cmp",
+            "user_query": "对比 000001 和 519770 的表现",
+            "funds_summary": [
+                {
+                    "id": "000001",
+                    "name": "华夏成长混合",
+                    "fund_type": "混合型",
+                    "aum": 10.0,
+                    "manager_name": "经理甲",
+                    "as_of": "2026-09-11T12:00:00",
+                    "data_quality": "complete",
+                },
+                {
+                    "id": "519770",
+                    "name": "交银优择回报A",
+                    "fund_type": "混合型-灵活配置",
+                    "aum": 44.16,
+                    "manager_name": "周珊珊 高扬",
+                    "as_of": "2026-09-11T12:00:00",
+                    "data_quality": "complete",
+                },
+            ],
+            "evidence": [
+                {"id": EV1, "evidence_type": "fund_data", "source": "s", "value": {"a": 1}},
+            ],
+            "tool_calls": [],
+            "research_plan": {
+                "task_type": "fund_comparison",
+                "primary_fund_id": "000001",
+                "fund_ids": ["000001", "519770"],
+                "notes": [],
+            },
+            "analysis": {
+                "performance": {
+                    "fund_id": "000001",
+                    "period_start": "2022-05-06",
+                    "period_end": "2026-09-18",
+                    "nav_point_count": 1065,
+                    "cumulative_return": 0.53,
+                    "annualized_return": 0.10,
+                    "data_quality": "complete",
+                },
+                "risk": {
+                    "fund_id": "000001",
+                    "annual_volatility": 0.21,
+                    "max_drawdown": -0.28,
+                    "sharpe": 0.59,
+                    "data_quality": "complete",
+                },
+                "peer_comparison": {
+                    "base_fund_id": "000001",
+                    "rows": [
+                        {
+                            "fund_id": "000001",
+                            "period_start": "2022-05-06",
+                            "period_end": "2026-09-18",
+                            "nav_point_count": 1065,
+                            "cumulative_return": 0.53,
+                            "annualized_return": 0.10,
+                            "annual_volatility": 0.21,
+                            "max_drawdown": -0.28,
+                            "sharpe": 0.59,
+                            "nav_basis": "acc",
+                        },
+                        {
+                            "fund_id": "519770",
+                            "period_start": "2022-05-06",
+                            "period_end": "2026-09-18",
+                            "nav_point_count": 1068,
+                            "cumulative_return": 3.18,
+                            "annualized_return": 0.39,
+                            "annual_volatility": 0.26,
+                            "max_drawdown": -0.29,
+                            "sharpe": 1.43,
+                            "nav_basis": "acc",
+                        },
+                    ],
+                    "concentration": [
+                        {"fund_id": "000001", "top10_sum": 10.5, "holding_count": 115},
+                        {"fund_id": "519770", "top10_sum": 63.03, "holding_count": 55},
+                    ],
+                    "overlaps": [
+                        {
+                            "fund_a": "000001",
+                            "fund_b": "519770",
+                            "overlap_ratio": 0.04,
+                            "common_names": ["贵州茅台"],
+                        },
+                    ],
+                },
+            },
+        }
+        state.update(overrides)
+        return state
+
+    def test_comparison_report_structure(self):
+        report = SynthesizerNode()(self._comparison_state())["report"]
+
+        assert report.title == "FundForge 基金对比报告：000001 华夏成长混合 vs 519770 交银优择回报A"
+        assert "本报告对比 2 只基金" in report.executive_summary
+        assert "对齐区间 2022-05-06 ~ 2026-09-18" in report.executive_summary
+        assert "年化收益领先：519770" in report.executive_summary
+        # 业绩/风险章节逐基金对称，无「主体基金」措辞
+        assert "主体基金" not in report.performance_analysis
+        for fund in ("000001", "519770"):
+            assert fund in report.performance_analysis
+            assert fund in report.risk_analysis
+            assert fund in report.manager_analysis
+        # 核心指标表格 + 持仓对比小节
+        assert "| 基金 | 类型 | 累计收益 | 年化收益 | 年化波动 | 最大回撤 | 夏普 |" in report.peer_comparison
+        assert "持仓集中度（最新报告期前十大合计）" in report.peer_comparison
+        assert "重叠 4%" in report.peer_comparison
+        assert "共同持仓：贵州茅台" in report.peer_comparison
+        assert report.metadata.task_type == "fund_comparison"
+
+    def test_comparison_render_headings(self):
+        thesis = _thesis(
+            [Claim(id="c1", statement="519770 年化领先", claim_type="performance", evidence_ids=[EV1], strength="strong")]
+        )
+        report = SynthesizerNode()(
+            self._comparison_state(investment_thesis=thesis.model_dump(mode="json"))
+        )["report"]
+        md = render_markdown(report)
+
+        assert "## 核心指标对比" in md
+        assert "## 对比结论" in md
+        assert "## 同类对比" not in md
+        assert "## 投资论点" not in md
+
+    def test_research_render_headings_unchanged(self):
+        thesis = _thesis(
+            [Claim(id="c1", statement="长期业绩为正", claim_type="performance", evidence_ids=[EV1], strength="strong")]
+        )
+        analysis = {
+            **_base_state()["analysis"],
+            "peer_comparison": {
+                "base_fund_id": "519770",
+                "rows": [
+                    {"fund_id": "519770", "annualized_return": 0.18, "annual_volatility": 0.17,
+                     "max_drawdown": -0.29, "sharpe": 1.13},
+                    {"fund_id": "000001", "annualized_return": 0.05, "annual_volatility": 0.10,
+                     "max_drawdown": -0.15, "sharpe": 0.50},
+                ],
+            },
+        }
+        state = _base_state(analysis=analysis, investment_thesis=thesis.model_dump(mode="json"))
+        state["funds_summary"].append(
+            {"id": "000001", "name": "华夏成长混合", "as_of": "2026-09-11T12:00:00", "data_quality": "complete"}
+        )
+        md = render_markdown(SynthesizerNode()(state)["report"])
+
+        assert "## 同类对比" in md
+        assert "## 投资论点" in md
+        assert "## 核心指标对比" not in md
+        assert "## 对比结论" not in md
+
+
 class TestMarkdownRendering:
     def test_render_markdown_contains_core_sections(self):
         thesis = _thesis(

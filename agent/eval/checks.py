@@ -11,6 +11,7 @@ Case 引用未注册的检查点名 → 判失败（fail fast，防止拼错检�
 from typing import Any, Callable
 
 from eval.models import CheckResult, CheckSpec, EvalCase
+from nodes.evaluator import claim_fund_ids
 
 _MANDATORY_DISCLAIMER = "不构成任何投资建议"
 
@@ -230,6 +231,44 @@ def suitability_mentions(state: dict, case: EvalCase, params: dict[str, Any]) ->
     return None
 
 
+def comparison_title_covers_funds(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告一等公民：标题必须覆盖全部期望基金（对称性入口）。"""
+    report = _report(state)
+    if report is None:
+        return "report 缺失"
+    expected = list(params.get("ids", case.fund_ids))
+    missing = [fid for fid in expected if fid not in report.title]
+    if missing:
+        return f"报告标题未覆盖基金：{missing}"
+    return None
+
+
+def comparative_claim_present(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对齐 Evaluator 口径：至少 1 个 claim 绑定证据覆盖 ≥2 只不同基金。"""
+    thesis = _thesis(state)
+    if thesis is None:
+        return "investment_thesis 缺失"
+    evidence_by_id = {e.id: e for e in state.get("evidence", [])}
+    for c in thesis.claims:
+        if len(claim_fund_ids(c, evidence_by_id)) >= 2:
+            return None
+    return "没有任何 claim 绑定跨基金证据（未形成跨基金对比结论）"
+
+
+def performance_sections_symmetric(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告：业绩与风险章节必须逐基金覆盖（防单基金模板硬套对比）。"""
+    report = _report(state)
+    if report is None:
+        return "report 缺失"
+    expected = list(params.get("ids", case.fund_ids))
+    for field, label in (("performance_analysis", "业绩分析"), ("risk_analysis", "风险分析")):
+        text = getattr(report, field) or ""
+        missing = [fid for fid in expected if fid not in text]
+        if missing:
+            return f"{label}章节未覆盖基金：{missing}"
+    return None
+
+
 REGISTRY: dict[str, Callable[[dict, EvalCase, dict[str, Any]], str | None]] = {
     "report_exists": report_exists,
     "has_suitability": has_suitability,
@@ -242,6 +281,9 @@ REGISTRY: dict[str, Callable[[dict, EvalCase, dict[str, Any]], str | None]] = {
     "data_gaps_disclosed_if_issues": data_gaps_disclosed_if_issues,
     "has_comparison_section": has_comparison_section,
     "peer_mentioned_in_report": peer_mentioned_in_report,
+    "comparison_title_covers_funds": comparison_title_covers_funds,
+    "comparative_claim_present": comparative_claim_present,
+    "performance_sections_symmetric": performance_sections_symmetric,
     "fund_count": fund_count,
     "evidence_count": evidence_count,
     "thesis_present": thesis_present,

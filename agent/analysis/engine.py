@@ -11,17 +11,22 @@
 - 夏普（简化）：mean(r) / pstdev(r) * sqrt(252)，无风险利率取 0，波动为 0 时返回 None。
 
 不满足计算条件（有效净值点不足）时返回 None，由调用方标记 data_quality。
+
+持仓对比维度（集中度 / 重叠度）同样为确定性纯函数：
+- 集中度：最新报告期前十大持仓占净值比例合计（%）；
+- 重叠度：两基金最新报告期持仓（按股票名）的 Jaccard 重叠率。
 """
 
 import math
 
-from domain.analysis import FundMetrics
-from domain.fund import NAVPoint
+from domain.analysis import FundConcentration, FundMetrics, HoldingsOverlap
+from domain.fund import Holding, NAVPoint, latest_report_period, top_holdings
 from domain.shared import DataQuality
 
 TRADING_DAYS_PER_YEAR = 252
 DAYS_PER_YEAR = 365
 _MIN_DAYS_FOR_ANNUALIZATION = 30
+_MAX_COMMON_NAMES = 10
 
 
 def nav_value(point: NAVPoint, basis: str) -> float | None:
@@ -130,6 +135,45 @@ def compute_fund_metrics(points: list[NAVPoint], basis: str = "auto") -> FundMet
     )
 
 
+def _latest_period_rows(holdings: list[Holding]) -> list[Holding]:
+    """最新报告期的持仓行；无任何可解析报告期时返回全部行（不编造报告期）。"""
+    period = latest_report_period(holdings)
+    if period is None:
+        return list(holdings)
+    return [h for h in holdings if h.report_date == period]
+
+
+def fund_concentration(holdings: list[Holding], fund_id: str) -> FundConcentration:
+    """最新报告期前十大持仓集中度与持仓个股数；无有效权重数据时 top10_sum 为 None。"""
+    top10 = top_holdings(holdings, 10)
+    ratios = [h.hold_ratio for h in top10 if h.hold_ratio is not None]
+    return FundConcentration(
+        fund_id=fund_id,
+        top10_sum=sum(ratios) if ratios else None,
+        holding_count=len(_latest_period_rows(holdings)),
+    )
+
+
+def holdings_overlap(
+    holdings_a: list[Holding],
+    holdings_b: list[Holding],
+    fund_a: str,
+    fund_b: str,
+) -> HoldingsOverlap:
+    """两基金最新报告期持仓（按股票名）的 Jaccard 重叠率；任一侧无持仓时 ratio 为 None。"""
+    names_a = {h.stock_name for h in _latest_period_rows(holdings_a)}
+    names_b = {h.stock_name for h in _latest_period_rows(holdings_b)}
+    if not names_a or not names_b:
+        return HoldingsOverlap(fund_a=fund_a, fund_b=fund_b, overlap_ratio=None, common_names=[])
+    common = names_a & names_b
+    return HoldingsOverlap(
+        fund_a=fund_a,
+        fund_b=fund_b,
+        overlap_ratio=len(common) / len(names_a | names_b),
+        common_names=sorted(common)[:_MAX_COMMON_NAMES],
+    )
+
+
 __all__ = [
     "nav_value",
     "simple_returns",
@@ -139,4 +183,6 @@ __all__ = [
     "max_drawdown",
     "sharpe_ratio",
     "compute_fund_metrics",
+    "fund_concentration",
+    "holdings_overlap",
 ]

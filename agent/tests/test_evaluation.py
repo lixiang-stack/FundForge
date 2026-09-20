@@ -142,6 +142,60 @@ class TestEvaluator:
         assert out["evaluation"].status == "pass"
 
 
+class TestComparisonAlignment:
+    """对比任务追加对齐检查：跨基金对比 claim（record-only，不触发 FAIL）。"""
+
+    def _comparison_state(self, claim_evidence_ids: list[str], evidence_extra: dict | None = None) -> dict:
+        thesis = _thesis(
+            [
+                Claim(
+                    id="c1",
+                    statement="对比结论",
+                    claim_type="performance",
+                    evidence_ids=claim_evidence_ids,
+                    strength="strong",
+                )
+            ],
+            risks=["回撤风险"],
+        )
+        evidence = [
+            {"id": EV1, "evidence_type": "calculation", "source": "s", "value": {"fund_id": "000001"}, "data_quality": "complete"},
+            {"id": EV2, "evidence_type": "calculation", "source": "s", "value": {"fund_id": "519770"}, "data_quality": "complete"},
+        ]
+        if evidence_extra:
+            evidence.append(evidence_extra)
+        return {
+            "user_query": "对比 000001 和 519770 的表现",
+            "task_type": "fund_comparison",
+            "analysis": {
+                "performance": {"fund_id": "000001"},
+                "risk": {"fund_id": "000001"},
+                "peer_comparison": {
+                    "base_fund_id": "000001",
+                    "rows": [{"fund_id": "000001"}, {"fund_id": "519770"}],
+                },
+            },
+            "evidence": evidence,
+            "claims": [c.model_dump(mode="json") for c in thesis.claims],
+            "investment_thesis": thesis.model_dump(mode="json"),
+        }
+
+    def test_single_fund_claim_flags_alignment(self):
+        evaluation = EvaluatorNode()(self._comparison_state([EV1]))["evaluation"]
+        assert any("未形成跨基金对比结论" in i for i in evaluation.question_alignment_issues)
+        assert evaluation.status == "pass"          # record-only，不触发 FAIL
+
+    def test_cross_fund_claim_passes(self):
+        evaluation = EvaluatorNode()(self._comparison_state([EV1, EV2]))["evaluation"]
+        assert evaluation.question_alignment_issues == []
+
+    def test_raw_ref_fallback_resolves_fund(self):
+        # value 无 fund_id 时回退解析 raw_ref 末段（store:nav/519770 → 519770）
+        extra = {"id": "ev-cccccccccccc", "evidence_type": "fund_data", "source": "s", "value": {}, "raw_ref": "store:nav/519770", "data_quality": "complete"}
+        evaluation = EvaluatorNode()(self._comparison_state([EV1, "ev-cccccccccccc"], evidence_extra=extra))["evaluation"]
+        assert evaluation.question_alignment_issues == []
+
+
 class TestRepair:
     def test_drops_claims_with_invalid_references(self):
         evaluation = EvaluationResult(status="fail", evidence_issues=["claim-1 引用了不存在的证据"])

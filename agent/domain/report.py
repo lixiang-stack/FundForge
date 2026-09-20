@@ -33,6 +33,7 @@ class ReportMetadata(BaseModel):
     llm_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    task_type: str | None = None            # 报告形态来源：fund_comparison 走对比结构
 
 
 class Report(BaseModel):
@@ -59,7 +60,14 @@ class Report(BaseModel):
 
 
 def render_markdown(report: Report) -> str:
-    """Report → Markdown（纯模板渲染，确定性）。"""
+    """Report → Markdown（纯模板渲染，确定性）。
+
+    对比任务（metadata.task_type == fund_comparison）章节标题差异化：
+    同类对比 → 核心指标对比；投资论点 → 对比结论。
+    """
+    is_comparison = report.metadata.task_type == "fund_comparison"
+    peer_heading = "## 核心指标对比" if is_comparison else "## 同类对比"
+    thesis_heading = "## 对比结论" if is_comparison else "## 投资论点"
     lines = [f"# {report.title}", ""]
     header_meta = [
         f"生成时间：{report.generated_at:%Y-%m-%d %H:%M}（request_id: {report.request_id}）"
@@ -101,14 +109,14 @@ def render_markdown(report: Report) -> str:
     if report.risk_analysis:
         lines += ["## 风险分析", report.risk_analysis, ""]
     if report.peer_comparison:
-        lines += ["## 同类对比", report.peer_comparison, ""]
+        lines += [peer_heading, report.peer_comparison, ""]
     if report.manager_analysis:
         lines += ["## 基金经理", report.manager_analysis, ""]
 
     thesis = report.investment_thesis
     if thesis is not None:
         lines += [
-            "## 投资论点",
+            thesis_heading,
             f"**结论**：{thesis.suitability}（证据充分度 {thesis.confidence:.2f}）",
             "",
             thesis.summary,

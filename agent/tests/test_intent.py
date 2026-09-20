@@ -42,6 +42,14 @@ class TestClassify:
         assert result.rule_hit == ClassificationRuleHit.R4_MULTI_CODE_COMPARISON
         assert result.confidence == pytest.approx(0.6)
 
+    def test_r4_suitability_comparison_is_comparison(self):
+        # 「哪个更适合长期持有」：分析词（适合/持有）+ 新对比词「哪个更」，无强主题词 → R4 对比
+        result = classify("015453 和 519770 哪个更适合长期持有")
+        assert result.task_type == TaskType.FUND_COMPARISON
+        assert result.rule_hit == ClassificationRuleHit.R4_MULTI_CODE_COMPARISON
+        assert result.confidence == pytest.approx(0.6)
+        assert result.fund_ids == ["015453", "519770"]
+
     def test_r5_no_intent_fallback(self):
         result = classify("519770 这只基金")
         assert result.task_type == TaskType.FUND_RESEARCH
