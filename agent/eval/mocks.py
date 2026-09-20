@@ -19,13 +19,13 @@ from tools.collector_client import CollectorClient
 FUND_CODES = ["519770", "004814", "015453"]
 
 DETAIL_ROWS = [
-    {"item": "基金代码", "value": "519770"},
-    {"item": "基金名称", "value": "交银优择回报A"},
-    {"item": "成立时间", "value": "2016-04-22"},
-    {"item": "最新规模", "value": "44.16亿"},
-    {"item": "基金经理", "value": "周珊珊 高扬"},
-    {"item": "基金类型", "value": "混合型-灵活配置"},
-    {"item": "基金公司", "value": "交银施罗德基金公司"},
+    {"item": "fund_code", "value": "519770"},
+    {"item": "fund_name", "value": "交银优择回报A"},
+    {"item": "inception_date", "value": "2016-04-22"},
+    {"item": "aum", "value": "44.16亿"},
+    {"item": "fund_manager", "value": "周珊珊 高扬"},
+    {"item": "fund_type", "value": "混合型-灵活配置"},
+    {"item": "fund_company", "value": "交银施罗德基金公司"},
 ]
 
 UNIT_ROWS = [

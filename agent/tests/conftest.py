@@ -13,21 +13,22 @@ FUND_CODE = "519770"
 # akshare 持仓的季度原文格式（如"2026年1季度股票投资明细"）；用当前年避免触发时效披露
 _QUARTER = f"{datetime.now().year}年1季度股票投资明细"
 
+# item 名为 collector FIELD_MAPS["fund_detail"] 标准化后的英文输出
 DETAIL_ROWS = [
-    {"item": "基金代码", "value": FUND_CODE},
-    {"item": "基金名称", "value": "交银优择回报A"},
-    {"item": "基金全称", "value": "交银施罗德优择回报灵活配置混合型证券投资基金"},
-    {"item": "成立时间", "value": "2016-04-22"},
-    {"item": "最新规模", "value": "44.16亿"},
-    {"item": "基金经理", "value": "周珊珊 高扬"},
-    {"item": "基金类型", "value": "混合型-灵活配置"},
-    {"item": "基金公司", "value": "交银施罗德基金公司"},
-    {"item": "托管银行", "value": "中信银行股份有限公司"},
-    {"item": "评级机构", "value": None},
-    {"item": "基金评级", "value": "暂无评级"},
-    {"item": "投资策略", "value": "本基金充分发挥基金管理人的研究优势，灵活调整大类资产配置比例。"},
-    {"item": "投资目标", "value": "力争为投资者提供长期稳健的投资回报。"},
-    {"item": "业绩比较基准", "value": "50%×沪深300指数收益率+50%×中债综合全价指数收益率"},
+    {"item": "fund_code", "value": FUND_CODE},
+    {"item": "fund_name", "value": "交银优择回报A"},
+    {"item": "fund_full_name", "value": "交银施罗德优择回报灵活配置混合型证券投资基金"},
+    {"item": "inception_date", "value": "2016-04-22"},
+    {"item": "aum", "value": "44.16亿"},
+    {"item": "fund_manager", "value": "周珊珊 高扬"},
+    {"item": "fund_type", "value": "混合型-灵活配置"},
+    {"item": "fund_company", "value": "交银施罗德基金公司"},
+    {"item": "custodian_bank", "value": "中信银行股份有限公司"},
+    {"item": "rating_agency", "value": None},
+    {"item": "fund_rating", "value": "暂无评级"},
+    {"item": "investment_strategy", "value": "本基金充分发挥基金管理人的研究优势，灵活调整大类资产配置比例。"},
+    {"item": "investment_objective", "value": "力争为投资者提供长期稳健的投资回报。"},
+    {"item": "benchmark", "value": "50%×沪深300指数收益率+50%×中债综合全价指数收益率"},
 ]
 
 UNIT_ROWS = [

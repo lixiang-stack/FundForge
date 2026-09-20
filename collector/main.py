@@ -113,6 +113,24 @@ FIELD_MAPS = {
         "年化夏普比率": "annual_sharpe",
         "最大回撤": "max_drawdown",
     },
+    # 雪球 fund_individual_basic_info_xq 返回 {item, value} 键值对行：
+    # 中文在 item 列的值里而非列名里，须用 df_to_kv_response 映射 item 值
+    "fund_detail": {
+        "基金代码": "fund_code",
+        "基金名称": "fund_name",
+        "基金全称": "fund_full_name",
+        "成立时间": "inception_date",
+        "最新规模": "aum",
+        "基金经理": "fund_manager",
+        "基金类型": "fund_type",
+        "基金公司": "fund_company",
+        "托管银行": "custodian_bank",
+        "评级机构": "rating_agency",
+        "基金评级": "fund_rating",
+        "投资策略": "investment_strategy",
+        "投资目标": "investment_objective",
+        "业绩比较基准": "benchmark",
+    },
 }
 
 
@@ -124,6 +142,17 @@ def df_to_response(df: pd.DataFrame, mapping_key: str = None) -> list[dict]:
         return []
     if mapping_key and mapping_key in FIELD_MAPS:
         df = df.rename(columns=FIELD_MAPS[mapping_key])
+    return df.astype(object).where(df.notna(), None).to_dict(orient="records")
+
+
+def df_to_kv_response(df: pd.DataFrame, mapping_key: str) -> list[dict]:
+    """雪球 {item, value} 键值对端点的 item 值标准化（列名固定为 item/value，中文在值里）。"""
+    if df is None or df.empty:
+        return []
+    mapping = FIELD_MAPS.get(mapping_key, {})
+    df = df.copy()
+    # 未命中的 item 原样透传：雪球源可能新增条目，消费方忽略未知键即可
+    df["item"] = df["item"].map(lambda v: mapping.get(v, v))
     return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 
@@ -212,7 +241,7 @@ def get_nav_estimation(
 def get_fund_detail(code: str):
     """基金详情（雪球源）"""
     df = ak.fund_individual_basic_info_xq(symbol=code)
-    return df_to_response(df)
+    return df_to_kv_response(df, "fund_detail")
 
 
 # ---- Fund Trading Rules (Xueqiu) ----

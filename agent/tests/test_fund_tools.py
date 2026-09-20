@@ -44,7 +44,7 @@ class TestGetFundInfo:
             client.close()
 
     def test_partial_fields_mark_partial(self):
-        partial = [{"item": "基金代码", "value": FUND_CODE}, {"item": "基金名称", "value": "某基金"}]
+        partial = [{"item": "fund_code", "value": FUND_CODE}, {"item": "fund_name", "value": "某基金"}]
         tools, _, client = make_tools(detail_rows=partial)
         try:
             fund = tools.get_fund_info.invoke({"fund_id": FUND_CODE})
