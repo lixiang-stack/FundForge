@@ -151,6 +151,25 @@ class TestThesisNode:
         out = ThesisNode(FakeLLMProvider(LLMError("boom")))(_state())
         assert any("投资论点生成失败" in i for i in out["data_quality_issues"])
 
+    def test_truncated_llm_error_preserves_partial_response(self):
+        # 截断场景：部分原始输出与实际用量须进 llm_interactions（运行记录诊断用）
+        provider = FakeLLMProvider(
+            LLMError(
+                "llm output truncated: finish_reason=length, max_tokens=4000",
+                content='{"summary": "截断的部分输出',
+                input_tokens=4500,
+                output_tokens=4000,
+            )
+        )
+        out = ThesisNode(provider)(_state())
+
+        interaction = out["llm_interactions"][0]
+        assert interaction.ok is False
+        assert interaction.response == '{"summary": "截断的部分输出'
+        assert interaction.input_tokens == 4500
+        assert interaction.output_tokens == 4000
+        assert "truncated" in interaction.error
+
     def test_success_records_llm_interaction(self):
         thesis = _thesis(
             [Claim(id="c1", statement="回撤可控", claim_type="risk", evidence_ids=[EV1], strength="strong")]

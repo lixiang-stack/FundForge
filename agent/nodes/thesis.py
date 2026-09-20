@@ -140,12 +140,15 @@ class ThesisNode:
             thesis = InvestmentThesis.model_validate_json(response.content)
         except (LLMError, ValidationError, ValueError) as e:
             logger.error("thesis generation failed: %s", e)
+            # 失败调用的部分原始输出与实际用量随 LLMError 透出（如输出截断），进运行记录供诊断
             interactions.append(
                 LlmInteraction(
                     node="thesis",
                     model=model_name,
                     prompt=prompt_text,
-                    response=response_text,
+                    response=response_text or (e.content if isinstance(e, LLMError) else None),
+                    input_tokens=e.input_tokens if isinstance(e, LLMError) else 0,
+                    output_tokens=e.output_tokens if isinstance(e, LLMError) else 0,
                     ok=False,
                     error=f"{type(e).__name__}: {e}",
                 )

@@ -43,7 +43,24 @@ class LLMProvider(Protocol):
 
 
 class LLMError(RuntimeError):
-    """LLM 调用失败（网络 / 鉴权 / 响应异常）。"""
+    """LLM 调用失败（网络 / 鉴权 / 响应异常）。
+
+    content / input_tokens / output_tokens：失败时已返回的部分响应与实际用量
+    （如输出截断场景），随异常透出供运行记录留存诊断；其他失败场景为缺省值。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        content: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.content = content
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 __all__ = ["Message", "LLMResponse", "LLMProvider", "LLMError"]
