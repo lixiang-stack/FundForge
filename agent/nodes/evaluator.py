@@ -125,6 +125,14 @@ class EvaluatorNode:
         if peer_expected:
             if analysis is None or analysis.peer_comparison is None:
                 alignment.append("query 要求基金对比，但未生成 peer 对比数据")
+            elif claims:
+                comparative = [
+                    c for c in claims if len(claim_fund_ids(c, evidence_by_id)) >= 2
+                ]
+                if not comparative:
+                    alignment.append(
+                        "对比任务：所有 claim 仅绑定单一基金证据，未形成跨基金对比结论"
+                    )
         if _LONG_TERM_KEYWORD in query and thesis is not None and "长期" not in thesis.suitability:
             alignment.append("query 询问长期持有，但 suitability 未回应持有期限维度")
 
@@ -154,6 +162,22 @@ class EvaluatorNode:
             len(evaluation.all_issues()),
         )
         return {"evaluation": evaluation}
+
+
+def claim_fund_ids(claim: Claim, evidence_by_id: dict[str, Evidence]) -> set[str]:
+    """claim 绑定证据覆盖的基金集合（value.fund_id 优先，回退解析 raw_ref 末段）。"""
+    funds: set[str] = set()
+    for eid in claim.evidence_ids:
+        e = evidence_by_id.get(eid)
+        if e is None:
+            continue
+        value = e.value if isinstance(e.value, dict) else None
+        fund_id = value.get("fund_id") if value else None
+        if not fund_id and e.raw_ref:
+            fund_id = e.raw_ref.rstrip("/").rsplit("/", 1)[-1]
+        if fund_id:
+            funds.add(str(fund_id))
+    return funds
 
 
 def _overall_score(issue_groups: list[list[str]]) -> float:

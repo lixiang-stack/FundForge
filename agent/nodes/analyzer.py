@@ -8,21 +8,26 @@
 
 import logging
 import uuid
+from itertools import combinations
 from typing import TypedDict
 from datetime import datetime, timedelta
 
-from analysis import compute_fund_metrics
+from analysis import compute_fund_metrics, fund_concentration, holdings_overlap
 from domain.analysis import (
     AnalysisResult,
+    FundConcentration,
     FundMetrics,
+    HoldingsOverlap,
     PeerComparison,
     PeerMetricsRow,
     PerformanceAnalysis,
     RiskAnalysis,
 )
 from domain.evidence import Evidence, EvidenceType
+from domain.fund import Holding
 from domain.plan import ResearchPlan
 from domain.shared import DataQuality
+from domain.task_type import TaskType
 from state import FundForgeState
 from store import FundStore
 
@@ -125,8 +130,29 @@ class AnalyzerNode:
                     f"（{detail}），各基金逐日覆盖不一致，指标横向对比需谨慎"
                 )
 
-        analysis = self._build_analysis(primary_id, fund_ids, metrics_by_fund)
-        evidence = self._build_evidence(fund_ids, metrics_by_fund, alignment)
+        # 持仓对比维度仅限对比任务（research-with-peers 不计算，保持既有 Evidence 计数）
+        task_type = plan.task_type if plan else state.get("task_type")
+        holdings_comparison = task_type == TaskType.FUND_COMPARISON and len(fund_ids) > 1
+        concentration: list[FundConcentration] = []
+        overlaps: list[HoldingsOverlap] = []
+        if holdings_comparison:
+            holdings_by_fund: dict[str, list[Holding]] = {
+                fid: self._store.get_holdings(fid) for fid in fund_ids
+            }
+            concentration = [fund_concentration(holdings_by_fund[fid], fid) for fid in fund_ids]
+            overlaps = [
+                holdings_overlap(holdings_by_fund[a], holdings_by_fund[b], a, b)
+                for a, b in combinations(fund_ids, 2)
+            ]
+            if not any(holdings_by_fund.values()):
+                issues.append("多基金对比：持仓数据缺失，未计算持仓集中度与重叠度")
+
+        analysis = self._build_analysis(
+            primary_id, fund_ids, metrics_by_fund, concentration, overlaps
+        )
+        evidence = self._build_evidence(
+            fund_ids, metrics_by_fund, alignment, concentration, overlaps
+        )
         issues += [
             f"{fid}: 净值数据不足（{m.nav_point_count} 个有效点），指标不可信"
             for fid, m in metrics_by_fund.items()
@@ -151,6 +177,8 @@ class AnalyzerNode:
         primary_id: str,
         fund_ids: list[str],
         metrics_by_fund: dict[str, FundMetrics],
+        concentration: list[FundConcentration] | None = None,
+        overlaps: list[HoldingsOverlap] | None = None,
     ) -> AnalysisResult:
         primary = metrics_by_fund[primary_id]
         performance = PerformanceAnalysis(
@@ -176,13 +204,20 @@ class AnalyzerNode:
                 rows=[
                     PeerMetricsRow(
                         fund_id=fid,
+                        period_start=m.period_start,
+                        period_end=m.period_end,
+                        nav_point_count=m.nav_point_count,
+                        cumulative_return=m.cumulative_return,
                         annualized_return=m.annualized_return,
                         annual_volatility=m.annual_volatility,
                         max_drawdown=m.max_drawdown,
                         sharpe=m.sharpe,
+                        nav_basis=m.nav_basis,
                     )
                     for fid, m in metrics_by_fund.items()
                 ],
+                concentration=concentration or [],
+                overlaps=overlaps or [],
             )
         return AnalysisResult(performance=performance, risk=risk, peer_comparison=peer_comparison)
 
@@ -191,8 +226,10 @@ class AnalyzerNode:
         fund_ids: list[str],
         metrics_by_fund: dict[str, FundMetrics],
         alignment: tuple | None = None,
+        concentration: list[FundConcentration] | None = None,
+        overlaps: list[HoldingsOverlap] | None = None,
     ) -> list[Evidence]:
-        """每只基金一条 calculation 类型 Evidence（§9：计算结果写入 Evidence）。"""
+        """每只基金一条指标 calculation Evidence + 持仓对比计算 Evidence（§9）。"""
         evidences = []
         for fid in fund_ids:
             m = metrics_by_fund[fid]
@@ -218,6 +255,47 @@ class AnalyzerNode:
                     },
                     data_quality=m.data_quality,
                     raw_ref=FundStore.nav_ref(fid),
+                )
+            )
+        for c in concentration or []:
+            if c.top10_sum is None:
+                continue
+            evidences.append(
+                Evidence(
+                    id=f"ev-{uuid.uuid4().hex[:12]}",
+                    evidence_type=EvidenceType.CALCULATION,
+                    source=_ANALYSIS_SOURCE,
+                    source_detail="确定性持仓对比计算（Analysis Engine，无 LLM）",
+                    as_of=datetime.now(),
+                    value={
+                        "metric": "top10_concentration",
+                        "fund_id": c.fund_id,
+                        "top10_sum": c.top10_sum,
+                        "holding_count": c.holding_count,
+                    },
+                    data_quality=DataQuality.COMPLETE,
+                    raw_ref=FundStore.holdings_ref(c.fund_id),
+                )
+            )
+        for o in overlaps or []:
+            if o.overlap_ratio is None:
+                continue
+            evidences.append(
+                Evidence(
+                    id=f"ev-{uuid.uuid4().hex[:12]}",
+                    evidence_type=EvidenceType.CALCULATION,
+                    source=_ANALYSIS_SOURCE,
+                    source_detail="确定性持仓对比计算（Analysis Engine，无 LLM）",
+                    as_of=datetime.now(),
+                    value={
+                        "metric": "holdings_overlap",
+                        "fund_a": o.fund_a,
+                        "fund_b": o.fund_b,
+                        "overlap_ratio": o.overlap_ratio,
+                        "common_names": o.common_names,
+                    },
+                    data_quality=DataQuality.COMPLETE,
+                    raw_ref=FundStore.holdings_ref(o.fund_a),
                 )
             )
         return evidences

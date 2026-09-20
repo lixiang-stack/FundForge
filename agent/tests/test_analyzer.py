@@ -1,5 +1,9 @@
 """AnalyzerNode 单元测试（Phase 2 验收：结果写入 State 与 Evidence，无 LLM）。"""
 
+from datetime import date
+
+import pytest
+
 from tests.conftest import FUND_CODE, make_tools
 from nodes.analyzer import AnalyzerNode
 from store import FundStore
@@ -120,3 +124,85 @@ class TestAnalyzerNode:
 
     def test_no_fund_ids_returns_empty(self):
         assert AnalyzerNode(FundStore())({"fund_ids": []}) == {}
+
+
+def _comparison_state(fund_ids: list[str]) -> dict:
+    return {
+        "fund_ids": fund_ids,
+        "research_plan": {
+            "task_type": "fund_comparison",
+            "primary_fund_id": fund_ids[0],
+            "fund_ids": fund_ids,
+            "notes": [],
+        },
+    }
+
+
+class TestAnalyzerHoldingsComparison:
+    def _collect(self, tools, codes: list[str]) -> None:
+        for code in codes:
+            tools.get_fund_info.invoke({"fund_id": code})
+            tools.get_fund_performance.invoke({"fund_id": code})
+            tools.get_fund_holdings.invoke({"fund_id": code})
+
+    def test_comparison_enriches_rows_and_holdings(self):
+        tools, store, client = make_tools()
+        try:
+            self._collect(tools, ["000001", FUND_CODE])
+            out = AnalyzerNode(store)(_comparison_state(["000001", FUND_CODE]))
+
+            pc = out["analysis"].peer_comparison
+            # rows 补齐区间 / 累计收益 / 净值口径；对齐窗口截断至 10 年（2016 首点被切）
+            assert pc.rows[0].period_start == date(2020, 1, 2)
+            assert pc.rows[0].nav_point_count == 2
+            assert pc.rows[0].cumulative_return == pytest.approx(5.7559 / 2.1 - 1)
+            assert pc.rows[0].nav_basis == "acc"
+
+            # 集中度：两基金同持仓（3.12 + 2.85），holding_count=2
+            assert [c.fund_id for c in pc.concentration] == ["000001", FUND_CODE]
+            assert all(c.top10_sum == 3.12 + 2.85 for c in pc.concentration)
+            assert all(c.holding_count == 2 for c in pc.concentration)
+
+            # 重叠：同一份持仓 → Jaccard 1.0
+            assert len(pc.overlaps) == 1
+            assert pc.overlaps[0].overlap_ratio == 1.0
+            assert pc.overlaps[0].common_names == ["宁德时代", "贵州茅台"]
+
+            # Evidence：2 条指标 + 2 条集中度 + 1 条重叠
+            assert len(out["evidence"]) == 5
+            kinds = {e.value.get("metric") for e in out["evidence"] if e.value.get("metric")}
+            assert kinds == {"top10_concentration", "holdings_overlap"}
+            assert out["data_quality_issues"] == []
+        finally:
+            client.close()
+
+    def test_research_with_peers_skips_holdings_comparison(self):
+        tools, store, client = make_tools()
+        try:
+            self._collect(tools, ["000001", FUND_CODE])
+            state = {
+                "fund_ids": ["000001", FUND_CODE],
+                "research_plan": {
+                    "task_type": "fund_research",
+                    "primary_fund_id": "000001",
+                    "fund_ids": ["000001", FUND_CODE],
+                    "notes": [],
+                },
+            }
+            out = AnalyzerNode(store)(state)
+
+            pc = out["analysis"].peer_comparison
+            assert pc is not None
+            assert pc.concentration == []
+            assert pc.overlaps == []
+            # 仅 2 条指标 Evidence，无持仓 Evidence（保住 eval 精确计数基线）
+            assert len(out["evidence"]) == 2
+        finally:
+            client.close()
+
+    def test_comparison_without_holdings_flags_issue(self):
+        # 空 store：对比任务但无任何持仓数据 → 披露而非编造
+        out = AnalyzerNode(FundStore())(_comparison_state(["000001", FUND_CODE]))
+        assert any("持仓数据缺失" in i for i in out["data_quality_issues"])
+        # 全部持仓缺失 → 不产生持仓 Evidence
+        assert all(e.value.get("metric") is None for e in out["evidence"])

@@ -455,9 +455,14 @@ Analysis Engine 必须是 **deterministic、testable、reproducible** 的纯函�
 - `calculate_sharpe(returns)`
 - `calculate_volatility(returns)`
 - `calculate_correlation(...)`
-- 等
+- `fund_concentration(holdings, fund_id)`：最新报告期前十大集中度（%）与持仓个股数
+- `holdings_overlap(holdings_a, holdings_b, fund_a, fund_b)`：两基金最新报告期持仓（按股票名）Jaccard 重叠率与共同个股
 
 这些函数不依赖 LLM，结果写入 Evidence（type=calculation）。
+
+PeerComparison 合同（fund_comparison 任务专属扩展）：
+- `rows`：全部基金同口径同区间指标（含区间起止 / 净值点数 / 累计收益 / 净值口径）；
+- `concentration` / `overlaps`：持仓集中度与两两重叠，**仅对比任务计算**（research-with-peers 不产生持仓 Evidence，保持既有 Evidence 计数）；数据缺失时对应维度为 None / 空列表，不编造。
 
 ---
 
@@ -521,6 +526,13 @@ class Report(BaseModel):
 ```
 
 Synthesizer 必须输出完整 Report 结构。
+
+对比报告一等公民（task_type == fund_comparison）：
+- `metadata.task_type` 记录报告形态来源；
+- 标题覆盖全部基金（`基金对比报告：A vs B`），摘要含对齐区间与确定性领先者；
+- 业绩分析 / 风险分析 / 基金经理逐基金对称呈现（无「主体基金」措辞）；
+- peer_comparison 渲染为 Markdown 对比表格 + 持仓集中度/重叠度小节；
+- 渲染标题差异化：同类对比 → 核心指标对比，投资论点 → 对比结论。
 
 ---
 

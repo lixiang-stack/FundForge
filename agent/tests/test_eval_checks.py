@@ -204,3 +204,112 @@ class TestCheckRegistry:
             [CheckSpec(name="report_data_gaps_contain", params={"keyword": "基金代码"})],
         )
         assert passed["report_data_gaps_contain"]
+
+
+class TestComparisonChecks:
+    """对比报告一等公民检查：标题覆盖 / 章节对称 / 跨基金 claim。"""
+
+    FUNDS = ["000001", "519770"]
+
+    def _comparison_report(
+        self,
+        title: str = "FundForge 基金对比报告：000001 A vs 519770 B",
+        performance: str = "000001 …、519770 …",
+        risk: str = "000001 …、519770 …",
+    ) -> Report:
+        return Report(
+            title=title,
+            generated_at=datetime.now(),
+            request_id="r",
+            executive_summary="s",
+            performance_analysis=performance,
+            risk_analysis=risk,
+            peer_comparison="…",
+            risks_and_disclaimers=["本报告由程序自动生成，不构成任何投资建议。"],
+            metadata=ReportMetadata(),
+        )
+
+    def _comparison_state(
+        self,
+        report: Report,
+        evidence: list[Evidence],
+        claim_evidence_ids: list[str] | None = None,
+    ) -> dict:
+        return _state(
+            report=report,
+            evidence=evidence,
+            fund_ids=self.FUNDS,
+            task_type=TaskType.FUND_COMPARISON,
+            investment_thesis=_thesis(
+                claims=[
+                    Claim(
+                        id="claim-1",
+                        statement="c",
+                        claim_type="performance",
+                        evidence_ids=claim_evidence_ids or ["ev-1"],
+                        strength="strong",
+                    )
+                ]
+            ),
+        )
+
+    def _run_comparison(self, state: dict, names: list[str]) -> dict[str, bool]:
+        specs = [CheckSpec(name=n) for n in names]
+        return _run(state, specs, fund_ids=self.FUNDS)
+
+    def test_title_covers_funds(self):
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), _state()["evidence"]),
+            ["comparison_title_covers_funds"],
+        )
+        assert passed["comparison_title_covers_funds"]
+
+        one_sided = self._comparison_report(title="FundForge 基金研究报告：000001 A")
+        passed = self._run_comparison(
+            self._comparison_state(one_sided, _state()["evidence"]),
+            ["comparison_title_covers_funds"],
+        )
+        assert not passed["comparison_title_covers_funds"]
+
+    def test_performance_sections_symmetric(self):
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), _state()["evidence"]),
+            ["performance_sections_symmetric"],
+        )
+        assert passed["performance_sections_symmetric"]
+
+        primary_only = self._comparison_report(performance="仅 000001", risk="仅 000001")
+        passed = self._run_comparison(
+            self._comparison_state(primary_only, _state()["evidence"]),
+            ["performance_sections_symmetric"],
+        )
+        assert not passed["performance_sections_symmetric"]
+
+    def test_comparative_claim_present(self):
+        cross_evidence = [
+            Evidence(id="ev-1", evidence_type="fund_data", source="s", value={"fund_id": "000001"}),
+            Evidence(id="ev-2", evidence_type="fund_data", source="s", value={"fund_id": "519770"}),
+        ]
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), cross_evidence, ["ev-1", "ev-2"]),
+            ["comparative_claim_present"],
+        )
+        assert passed["comparative_claim_present"]
+
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), cross_evidence, ["ev-1"]),
+            ["comparative_claim_present"],
+        )
+        assert not passed["comparative_claim_present"]
+
+    def test_comparative_claim_raw_ref_fallback(self):
+        # value 无 fund_id 时回退解析 raw_ref 末段（与 Evaluator 同口径）
+        evidence = [
+            Evidence(id="ev-1", evidence_type="fund_data", source="s", value={"fund_id": "000001"}),
+            Evidence(id="ev-2", evidence_type="fund_data", source="s", value={}, raw_ref="store:nav/519770"),
+        ]
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), evidence, ["ev-1", "ev-2"]),
+            ["comparative_claim_present"],
+        )
+        assert passed["comparative_claim_present"]

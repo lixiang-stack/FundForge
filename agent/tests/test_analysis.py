@@ -13,16 +13,22 @@ from analysis.engine import (
     annualized_volatility,
     compute_fund_metrics,
     cumulative_return,
+    fund_concentration,
+    holdings_overlap,
     max_drawdown,
     nav_value,
     sharpe_ratio,
     simple_returns,
 )
-from domain.fund import NAVPoint
+from domain.fund import Holding, NAVPoint
 
 
 def _point(d: str, unit: float | None = None, acc: float | None = None) -> NAVPoint:
     return NAVPoint(nav_date=date.fromisoformat(d), unit_nav=unit, acc_nav=acc)
+
+
+def _h(name: str, ratio: float | None, period: str = "2026年2季度股票投资明细") -> Holding:
+    return Holding(stock_code=f"c-{name}", stock_name=name, hold_ratio=ratio, report_date=period)
 
 
 class TestSimpleReturns:
@@ -221,3 +227,53 @@ class TestComputeFundMetricsBasis:
         assert m.nav_basis == "unit"
         assert m.nav_point_count == 1
         assert m.data_quality == "partial"
+
+
+class TestFundConcentration:
+    def test_top10_sum_only_latest_period(self):
+        # 12 只最新报告期持仓（权重 1..12）+ 更早报告期行 → 只合计最新期前十大
+        holdings = [_h(f"股{i}", float(i)) for i in range(1, 13)]
+        holdings += [_h("旧股", 5.0, period="2025年4季度股票投资明细")]
+        c = fund_concentration(holdings, "000001")
+        assert c.fund_id == "000001"
+        assert c.top10_sum == pytest.approx(3.0 + 4.0 + 5.0 + 6.0 + 7.0 + 8.0 + 9.0 + 10.0 + 11.0 + 12.0)
+        assert c.holding_count == 12
+
+    def test_no_valid_ratios_gives_none(self):
+        holdings = [_h("股A", None), _h("股B", None)]
+        assert fund_concentration(holdings, "000001").top10_sum is None
+
+    def test_empty_holdings(self):
+        c = fund_concentration([], "000001")
+        assert c.top10_sum is None
+        assert c.holding_count == 0
+
+
+class TestHoldingsOverlap:
+    def test_jaccard_exact(self):
+        # {甲乙丙丁} ∩ {乙丙戊} = 2，并集 5 → 0.4
+        a = [_h("甲", 2.0), _h("乙", 1.5), _h("丙", 1.2), _h("丁", 1.0)]
+        b = [_h("乙", 9.0), _h("丙", 5.0), _h("戊", 3.0)]
+        r = holdings_overlap(a, b, "000001", "519770")
+        assert r.fund_a == "000001"
+        assert r.fund_b == "519770"
+        assert r.overlap_ratio == pytest.approx(0.4)
+        assert r.common_names == ["丙", "乙"]  # 按名称排序
+
+    def test_older_period_rows_excluded(self):
+        a = [_h("甲", 2.0), _h("乙", 1.0), _h("旧甲", 1.0, period="2025年4季度股票投资明细")]
+        b = [_h("旧甲", 2.0), _h("丙", 1.0)]
+        assert holdings_overlap(a, b, "000001", "519770").overlap_ratio == pytest.approx(0.0)
+
+    def test_empty_side_gives_none(self):
+        r = holdings_overlap([_h("甲", 1.0)], [], "000001", "519770")
+        assert r.overlap_ratio is None
+        assert r.common_names == []
+
+    def test_common_names_capped(self):
+        names = [f"股{i}" for i in range(15)]
+        a = [_h(n, 1.0) for n in names]
+        b = [_h(n, 1.0) for n in names]
+        r = holdings_overlap(a, b, "000001", "519770")
+        assert r.overlap_ratio == pytest.approx(1.0)
+        assert len(r.common_names) == 10

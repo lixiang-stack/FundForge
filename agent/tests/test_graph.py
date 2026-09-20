@@ -90,7 +90,7 @@ class TestConditionalRouting:
 
     def test_comparison_task_routes_and_plans_peers(self):
         """纯对比意图 → FUND_COMPARISON，peer 基金显式进入 plan 与 State。"""
-        graph, client = _build(llm=DynamicThesisProvider())
+        graph, client = _build(llm=DynamicThesisProvider(cite="all"))
         try:
             result = graph.invoke({"request_id": "t7", "user_query": "000001 和 519770 哪个好"})
             assert result["task_type"] == TaskType.FUND_COMPARISON
@@ -99,7 +99,11 @@ class TestConditionalRouting:
             analysis = result["analysis"]
             assert analysis.peer_comparison is not None
             assert len(analysis.peer_comparison.rows) == 2
-            # 对比任务的对齐检查：peer 数据已生成 → 无 alignment 问题
+            # 对比报告一等公民：标题对称覆盖双方，claim 绑定跨基金证据 → 无 alignment 问题
+            report = result["report"]
+            assert report.title.startswith("FundForge 基金对比报告：")
+            assert "000001" in report.title and FUND_CODE in report.title
+            assert "主体基金" not in report.performance_analysis
             assert result["evaluation"].question_alignment_issues == []
         finally:
             client.close()

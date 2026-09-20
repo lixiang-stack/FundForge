@@ -21,11 +21,28 @@ def _evidence_ids_from_prompt(messages) -> list[str]:
     return [e["id"] for e in context["evidence"]]
 
 
+def _per_fund_evidence_ids(messages) -> list[str]:
+    """每只基金取首条证据 id（按 prompt 顺序去重）。
+
+    单基金退化为首条证据；对比任务天然绑定双方证据，
+    满足「跨基金对比 claim」口径（与 Evaluator 对齐）。
+    """
+    context = json.loads(messages[1].content.split("：\n", 1)[1])
+    picked: list[str] = []
+    seen: set[str] = set()
+    for e in context["evidence"]:
+        fund_id = (e.get("value") or {}).get("fund_id")
+        if fund_id and fund_id not in seen:
+            seen.add(fund_id)
+            picked.append(e["id"])
+    return picked or _evidence_ids_from_prompt(messages)[:1]
+
+
 class DeterministicThesisProvider:
-    """固定产出 1 条绑定首条证据的 Claim（suitability 回应长期持有维度）。"""
+    """固定产出 1 条绑定「每基金首条证据」的 Claim（suitability 回应长期持有维度）。"""
 
     def generate(self, messages, *, structured_output=None) -> LLMResponse:
-        ev_ids = _evidence_ids_from_prompt(messages)
+        ev_ids = _per_fund_evidence_ids(messages)
         thesis = InvestmentThesis(
             summary="概要（确定性 Fake LLM 输出）",
             claims=[
@@ -33,7 +50,7 @@ class DeterministicThesisProvider:
                     id="c1",
                     statement="基于采集证据的确定性结论",
                     claim_type="performance",
-                    evidence_ids=ev_ids[:1],
+                    evidence_ids=ev_ids,
                     strength="moderate",
                 )
             ],

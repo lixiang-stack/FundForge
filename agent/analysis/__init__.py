@@ -9,6 +9,8 @@ from analysis.engine import (
     annualized_volatility,
     compute_fund_metrics,
     cumulative_return,
+    fund_concentration,
+    holdings_overlap,
     max_drawdown,
     nav_value,
     sharpe_ratio,
@@ -24,4 +26,6 @@ __all__ = [
     "max_drawdown",
     "sharpe_ratio",
     "compute_fund_metrics",
+    "fund_concentration",
+    "holdings_overlap",
 ]
