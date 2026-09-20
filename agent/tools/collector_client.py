@@ -5,6 +5,7 @@ Agent 的 Fund Tools 统一经由本客户端访问数据，不直接调用 aksh
 """
 
 import logging
+import time
 from typing import Any, Literal
 
 import httpx
@@ -32,6 +33,11 @@ _NAV_INDICATOR_PARAM: dict[str, str] = {
     "unit": "单位净值走势",
     "acc": "累计净值走势",
 }
+
+# 瞬时连接失败（macOS 偶发 getaddrinfo 失败等）在并发建连窗口内常自愈，短退避重试即可；
+# 仅重试 ConnectError，超时/HTTP 状态错误仍立即失败。
+_CONNECT_RETRY_ATTEMPTS = 2     # 首次失败后的额外尝试次数（共 3 次）
+_CONNECT_RETRY_BACKOFF_S = 0.2  # 指数退避基数：0.2s → 0.4s
 
 
 class CollectorClient:
@@ -82,12 +88,29 @@ class CollectorClient:
     # ---- internals ----
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        try:
-            resp = self._client.get(path, params=params)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            logger.error("collector request failed: %s %s: %s", path, params, e)
-            raise CollectorError(f"collector {path} failed: {e}") from e
+        attempt = 0
+        while True:
+            try:
+                resp = self._client.get(path, params=params)
+                resp.raise_for_status()
+                break
+            except httpx.ConnectError as e:
+                if attempt >= _CONNECT_RETRY_ATTEMPTS:
+                    logger.error(
+                        "collector connect failed after %d attempts: %s %s: %s",
+                        attempt + 1, path, params, e,
+                    )
+                    raise CollectorError(f"collector {path} failed: {e}") from e
+                delay = _CONNECT_RETRY_BACKOFF_S * (2**attempt)
+                logger.warning(
+                    "collector connect failed (attempt %d/%d), retry in %.1fs: %s %s: %s",
+                    attempt + 1, _CONNECT_RETRY_ATTEMPTS + 1, delay, path, params, e,
+                )
+                attempt += 1
+                time.sleep(delay)
+            except httpx.HTTPError as e:
+                logger.error("collector request failed: %s %s: %s", path, params, e)
+                raise CollectorError(f"collector {path} failed: {e}") from e
         data = resp.json()
         if not isinstance(data, list):
             raise CollectorError(f"collector {path} returned unexpected payload type")

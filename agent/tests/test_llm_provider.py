@@ -67,19 +67,24 @@ class TestOpenAICompatProvider:
         _provider(handler).generate([Message("user", "hi")])
         assert seen["payload"]["max_tokens"] == LLM_MAX_TOKENS
 
-    def test_truncated_output_raises_llm_error(self):
+    def test_truncated_output_raises_llm_error_with_partial_content(self):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
                 json={
                     "choices": [
                         {"message": {"content": '{"summary":'}, "finish_reason": "length"}
-                    ]
+                    ],
+                    "usage": {"prompt_tokens": 4500, "completion_tokens": 4000},
                 },
             )
 
-        with pytest.raises(LLMError, match="truncated"):
+        with pytest.raises(LLMError, match="truncated") as exc_info:
             _provider(handler).generate([Message("user", "hi")])
+        # 部分原始输出与实际用量随异常透出（运行记录留存诊断用）
+        assert exc_info.value.content == '{"summary":'
+        assert exc_info.value.input_tokens == 4500
+        assert exc_info.value.output_tokens == 4000
 
     def test_http_error_wrapped_as_llm_error(self):
         def handler(request: httpx.Request) -> httpx.Response:

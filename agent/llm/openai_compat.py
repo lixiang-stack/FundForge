@@ -73,9 +73,14 @@ class OpenAICompatProvider:
         try:
             choice = resp.choices[0]
             if choice.finish_reason == "length":
-                # 截断的 JSON 无法通过调用方 Pydantic 校验，显式报错并保留截断原因
+                # 截断的 JSON 无法通过调用方 Pydantic 校验，显式报错并保留截断原因；
+                # 部分响应与实际用量随异常透出，运行记录留存供诊断
+                usage = getattr(resp, "usage", None)
                 raise LLMError(
-                    f"llm output truncated: finish_reason=length, max_tokens={LLM_MAX_TOKENS}"
+                    f"llm output truncated: finish_reason=length, max_tokens={LLM_MAX_TOKENS}",
+                    content=choice.message.content,
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
                 )
             content = choice.message.content or ""
             usage = resp.usage
