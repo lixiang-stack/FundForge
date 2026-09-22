@@ -108,6 +108,228 @@ class TestReportStructure:
         assert report.key_claims[0].claim_type == "peer"
 
 
+class TestReportNewSections:
+    """数据缺口补齐：费率与评级、持仓概览的行业/资产配置、同类排名渲染。"""
+
+    def _enriched_evidence(self) -> list:
+        return [
+            {
+                "id": "ev-fee0000001",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/fees",
+                "value": {
+                    "fund_id": "519770",
+                    "management_fee_rate": 1.0,
+                    "custodian_fee_rate": 0.15,
+                    "service_fee_rate": 0.0,
+                },
+            },
+            {
+                "id": "ev-rat0000001",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/rating",
+                "value": {
+                    "fund_id": "519770",
+                    "five_star_count": 2,
+                    "rating_sh": 4.0,
+                    "rating_zs": 5.0,
+                    "rating_ja": 4.0,
+                    "rating_mx": 5.0,
+                },
+            },
+            {
+                "id": "ev-ind0000001",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/industry",
+                "value": {
+                    "fund_id": "519770",
+                    "latest_report_date": "2026-06-30",
+                    "row_count": 2,
+                    "top_industries": [
+                        {"industry": "制造业", "nav_ratio": 68.96},
+                        {"industry": "金融业", "nav_ratio": 6.78},
+                    ],
+                },
+            },
+            {
+                "id": "ev-alo0000001",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/allocation",
+                "value": {
+                    "fund_id": "519770",
+                    "allocation": [
+                        {"asset_type": "股票", "percent": 94.18},
+                        {"asset_type": "现金", "percent": 5.46},
+                    ],
+                },
+            },
+            {
+                "id": "ev-ach0000001",
+                "evidence_type": "fund_data",
+                "source": "collector:/api/funds/519770/achievement",
+                "value": {
+                    "fund_id": "519770",
+                    "achievement": [
+                        {
+                            "performance_type": "年度业绩",
+                            "period": "成立以来",
+                            "return_rate": 53.44,
+                            "max_drawdown": 27.6,
+                            "category_rank": "308/1070",
+                        }
+                    ],
+                },
+            },
+        ]
+
+    def test_cost_and_rating_section(self):
+        state = _base_state(evidence=self._enriched_evidence())
+        report = SynthesizerNode()(state)["report"]
+
+        assert report.cost_and_rating is not None
+        assert "管理费 1.00%/年、托管费 0.15%/年" in report.cost_and_rating
+        assert "第三方评级（2 家五星）：上海证券 4星、招商证券 5星、济安金信 4星、晨星 5星" in report.cost_and_rating
+        # 同类排名：分位数 + 原始名次 + 各自类型标注 + 跨类型口径提示
+        assert "（混合型-灵活配置）同类排名：成立以来 前 28.8%（308/1070）" in report.cost_and_rating
+        assert "跨类型基金之间不可直接比较" in report.cost_and_rating
+        assert "## 费率、评级与同类排名" in render_markdown(report)
+
+    def test_cost_and_rating_absent_without_evidence(self):
+        report = SynthesizerNode()(_base_state())["report"]
+        assert report.cost_and_rating is None
+        assert "费率与评级" not in render_markdown(report)
+
+    def test_holdings_industry_and_allocation_lines(self):
+        state = _base_state(evidence=self._enriched_evidence())
+        report = SynthesizerNode()(state)["report"]
+
+        assert "行业配置（2026-06-30前五）：制造业 68.96%、金融业 6.78%" in report.holdings_analysis
+        assert "资产配置：股票 94.18%、现金 5.46%" in report.holdings_analysis
+
+    def test_market_split_rendered_as_percent(self):
+        # 回归：market_split 字段本身是百分数（59.89 表示 59.89%），
+        # 渲染不得再走 _fmt_pct（小数×100），否则出现 5989.00% 双重百分比
+        analysis = _base_state()["analysis"] | {
+            "holdings_metrics": [
+                {
+                    "fund_id": "519770",
+                    "top10_sum": 42.36,
+                    "holding_count": 83,
+                    "market_split": {"a_share_ratio": 59.89, "hk_share_ratio": 40.53},
+                }
+            ]
+        }
+        state = _base_state(analysis=analysis, evidence=self._enriched_evidence())
+        report = SynthesizerNode()(state)["report"]
+
+        assert "市场分布（占披露持仓净值比）：A股 59.89%、港股 40.53%" in report.holdings_analysis
+        assert "5989" not in report.holdings_analysis
+
+    def test_achievement_not_in_peer_text(self):
+        analysis = {
+            "performance": {
+                "fund_id": "519770",
+                "period_start": "2016-04-22",
+                "period_end": "2026-09-10",
+                "nav_point_count": 2487,
+                "cumulative_return": 4.835,
+                "annualized_return": 0.185,
+                "data_quality": "complete",
+            },
+            "risk": {
+                "fund_id": "519770",
+                "annual_volatility": 0.1708,
+                "max_drawdown": -0.2901,
+                "sharpe": 1.132,
+                "sortino": 1.9,
+                "data_quality": "complete",
+            },
+            "peer_comparison": {
+                "base_fund_id": "519770",
+                "rows": [
+                    {
+                        "fund_id": "519770",
+                        "cumulative_return": 4.835,
+                        "annualized_return": 0.185,
+                        "annual_volatility": 0.1708,
+                        "max_drawdown": -0.2901,
+                        "sharpe": 1.132,
+                        "sortino": 1.9,
+                        "nav_basis": "acc",
+                    },
+                    {
+                        "fund_id": "015453",
+                        "cumulative_return": 0.5,
+                        "annualized_return": 0.1,
+                        "annual_volatility": 0.2,
+                        "max_drawdown": -0.28,
+                        "sharpe": 0.6,
+                        "sortino": 0.9,
+                        "nav_basis": "acc",
+                    },
+                ],
+            },
+        }
+        state = _base_state(
+            evidence=self._enriched_evidence(),
+            analysis=analysis,
+        )
+        report = SynthesizerNode()(state)["report"]
+
+        # 同类排名已移出对比章节（跨类型原始名次不可比），仅保留同口径指标
+        assert "同类排名" not in report.peer_comparison
+
+    def test_comparison_table_has_sortino_column(self):
+        analysis = {
+            "performance": {
+                "fund_id": "519770",
+                "cumulative_return": 4.835,
+                "annualized_return": 0.185,
+                "data_quality": "complete",
+            },
+            "risk": {"fund_id": "519770", "sharpe": 1.132, "sortino": 1.9, "data_quality": "complete"},
+            "peer_comparison": {
+                "base_fund_id": "519770",
+                "rows": [
+                    {
+                        "fund_id": "519770",
+                        "cumulative_return": 4.835,
+                        "annualized_return": 0.185,
+                        "annual_volatility": 0.1708,
+                        "max_drawdown": -0.2901,
+                        "sharpe": 1.132,
+                        "sortino": 1.9,
+                        "nav_basis": "acc",
+                    },
+                    {
+                        "fund_id": "015453",
+                        "cumulative_return": 0.5,
+                        "annualized_return": 0.1,
+                        "annual_volatility": 0.2,
+                        "max_drawdown": -0.28,
+                        "sharpe": 0.6,
+                        "sortino": 0.9,
+                        "nav_basis": "acc",
+                    },
+                ],
+            },
+        }
+        state = _base_state(
+            analysis=analysis,
+            research_plan={
+                "task_type": "fund_comparison",
+                "primary_fund_id": "519770",
+                "fund_ids": ["519770", "015453"],
+                "notes": [],
+            },
+        )
+        report = SynthesizerNode()(state)["report"]
+
+        # 对比模式：Markdown 表格含 Sortino 列
+        assert "| 夏普 | Sortino |" in report.peer_comparison
+        assert "1.90" in report.peer_comparison
+
+
 class TestReportLabelsAndHoldings:
     """P1：业绩/风险/对比章节标注基金；P2：持仓概览章节。"""
 

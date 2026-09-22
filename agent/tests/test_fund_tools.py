@@ -1,8 +1,13 @@
 """Fund Tools 单元测试（Phase 1 验收：Tool 返回格式正确 + data_quality 标记）。"""
 
-from datetime import date
+from datetime import date, datetime
 
-from tests.conftest import FUND_CODE, make_tools
+import httpx
+
+from tests.conftest import FUND_CODE, make_tools, make_transport
+from store import FundStore
+from tools.collector_client import CollectorClient
+from tools.fund_tools import make_fund_tools
 
 
 class TestGetFundInfo:
@@ -116,6 +121,142 @@ class TestGetFundPerformance:
             assert perf.data_quality == "missing"
             assert perf.period_start is None
             assert perf.nav_point_count == 0
+        finally:
+            client.close()
+
+
+class TestGetFundIndustryAlloc:
+    def test_returns_structured_rows(self, tools_and_store):
+        tools, store = tools_and_store
+        rows = tools.get_fund_industry_alloc.invoke({"fund_id": FUND_CODE})
+
+        assert len(rows) == 2
+        assert rows[0].industry == "制造业"
+        assert rows[0].nav_ratio == 68.96
+        assert rows[0].report_date == "2026-06-30"
+        assert len(store.get_industry(FUND_CODE)) == 2
+        assert store.industry_ref(FUND_CODE) == f"store:industry/{FUND_CODE}"
+
+    def test_empty_industry_returns_empty(self):
+        tools, store, client = make_tools(industry_rows=[])
+        try:
+            rows = tools.get_fund_industry_alloc.invoke({"fund_id": FUND_CODE})
+            assert rows == []
+            assert store.get_industry(FUND_CODE) == []
+        finally:
+            client.close()
+
+
+class TestGetFundAssetAllocation:
+    def test_explicit_date_passes_through(self, tools_and_store):
+        tools, store = tools_and_store
+        rows = tools.get_fund_asset_allocation.invoke({"fund_id": FUND_CODE, "date": "20260630"})
+
+        assert len(rows) == 3
+        assert rows[0].asset_type == "股票"
+        assert rows[0].percent == 94.18
+        assert len(store.get_allocation(FUND_CODE)) == 3
+
+    def test_date_defaults_to_latest_holdings_period(self):
+        # 缺省 date 取股票持仓最新报告期对应的财报月末（1 季度 → 0331）
+        transport = make_transport()
+        captured: dict = {}
+        original = transport.handler
+
+        def spy(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/allocation"):
+                captured["date"] = request.url.params.get("date")
+            return original(request)
+
+        transport.handler = spy
+        client = CollectorClient(base_url="http://collector.test", transport=transport)
+        store = FundStore()
+        tools = make_fund_tools(client, store)
+        try:
+            tools.get_fund_holdings.invoke({"fund_id": FUND_CODE})
+            rows = tools.get_fund_asset_allocation.invoke({"fund_id": FUND_CODE})
+            assert rows
+            assert captured["date"] == f"{datetime.now().year}0331"
+        finally:
+            client.close()
+
+    def test_no_holdings_period_returns_empty(self):
+        # 无持仓报告期可依据 → 不编造日期，返回空列表
+        tools, store, client = make_tools()
+        try:
+            rows = tools.get_fund_asset_allocation.invoke({"fund_id": FUND_CODE})
+            assert rows == []
+            assert store.get_allocation(FUND_CODE) == []
+        finally:
+            client.close()
+
+
+class TestGetFundFees:
+    def test_returns_structured_fees(self, tools_and_store):
+        tools, store = tools_and_store
+        fees = tools.get_fund_fees.invoke({"fund_id": FUND_CODE})
+
+        assert fees.management_fee_rate == 1.0
+        assert fees.custodian_fee_rate == 0.15
+        assert fees.service_fee_rate == 0.0
+        assert store.get_fees(FUND_CODE) == fees
+        assert store.fees_ref(FUND_CODE) == f"store:fees/{FUND_CODE}"
+
+    def test_empty_fees_gives_none_fields(self):
+        tools, store, client = make_tools(fees_rows=[])
+        try:
+            fees = tools.get_fund_fees.invoke({"fund_id": FUND_CODE})
+            assert fees.management_fee_rate is None
+            assert fees.custodian_fee_rate is None
+            assert fees.service_fee_rate is None
+        finally:
+            client.close()
+
+
+class TestGetFundAchievement:
+    def test_returns_structured_rows(self, tools_and_store):
+        tools, store = tools_and_store
+        rows = tools.get_fund_achievement.invoke({"fund_id": FUND_CODE})
+
+        assert len(rows) == 2
+        assert rows[0].performance_type == "年度业绩"
+        assert rows[0].period == "成立以来"
+        assert rows[0].return_rate == 53.44
+        assert rows[0].max_drawdown == 27.6
+        assert rows[0].category_rank == "308/1070"
+        assert len(store.get_achievement(FUND_CODE)) == 2
+        assert store.achievement_ref(FUND_CODE) == f"store:achievement/{FUND_CODE}"
+
+    def test_empty_achievement_returns_empty(self):
+        tools, store, client = make_tools(achievement_rows=[])
+        try:
+            assert tools.get_fund_achievement.invoke({"fund_id": FUND_CODE}) == []
+            assert store.get_achievement(FUND_CODE) == []
+        finally:
+            client.close()
+
+
+class TestGetFundRating:
+    def test_returns_structured_rating(self, tools_and_store):
+        tools, store = tools_and_store
+        ratings = tools.get_fund_rating.invoke({"fund_id": FUND_CODE})
+
+        assert len(ratings) == 1
+        assert ratings[0].fund_code == FUND_CODE
+        assert ratings[0].five_star_count == 2
+        assert ratings[0].rating_sh == 4.0
+        assert ratings[0].rating_zs == 5.0
+        assert ratings[0].rating_ja == 4.0
+        assert ratings[0].rating_mx == 5.0
+        assert len(store.get_rating(FUND_CODE)) == 1
+        assert store.rating_ref(FUND_CODE) == f"store:rating/{FUND_CODE}"
+
+    def test_no_rating_returns_empty(self):
+        tools, store, client = make_tools(rating_rows=[])
+        try:
+            ratings = tools.get_fund_rating.invoke({"fund_id": FUND_CODE})
+            assert ratings == []
+            assert store.get_rating(FUND_CODE) == []
         finally:
             client.close()
 

@@ -305,12 +305,29 @@ def get_fund_holdings(fund_id: str, year: str | None = None) -> list[Holding]:
 
 @tool
 def get_fund_manager(fund_id: str) -> FundManager: ...
+
+@tool
+def get_fund_industry_alloc(fund_id: str, year: str | None = None) -> list[IndustryAllocRow]: ...
+
+@tool
+def get_fund_asset_allocation(fund_id: str, date: str | None = None) -> list[AssetAllocRow]:
+    """date 缺省取股票持仓最新报告期对应的财报月末；无依据时返回空列表。"""
+
+@tool
+def get_fund_fees(fund_id: str) -> FeeInfo: ...
+
+@tool
+def get_fund_achievement(fund_id: str) -> list[AchievementRow]: ...
+
+@tool
+def get_fund_rating(fund_id: str) -> list[FundRating]: ...
 ```
 
 ### Market Tools
 ```python
 @tool
-def get_index_data(index_id: str, start_date: date, end_date: date) -> IndexData: ...
+def get_index_data(index_id: str, start_date: date, end_date: date) -> list[IndexPoint]:
+    """index_id 为带市场前缀的指数代码（如 sh000905）；collector 按需拉取日线收盘。"""
 
 @tool
 def get_sector_data(sector: str, start_date: date, end_date: date) -> SectorData: ...
@@ -448,6 +465,7 @@ class AnalysisResult(BaseModel):
     risk: RiskAnalysis
     portfolio: PortfolioAnalysis | None
     peer_comparison: PeerComparison | None
+    holdings_metrics: list[FundHoldingsMetrics]   # 每基金持仓分析（集中度 + 市场分布），全任务计算
 ```
 
 Analysis Engine 必须是 **deterministic、testable、reproducible** 的纯函数集合：
@@ -455,14 +473,25 @@ Analysis Engine 必须是 **deterministic、testable、reproducible** 的纯函�
 - `calculate_sharpe(returns)`
 - `calculate_volatility(returns)`
 - `calculate_correlation(...)`
+- `sortino_ratio(returns)`：mean(r) / 下行偏差 × √252（下行偏差 = √mean(min(r,0)²)，全样本分母；rf=0；下行偏差为 0 返回 None）
+- `yearly_returns(series)`：自然年内首末有效净值累计收益（年内不足 2 点不列入）
+- `drawdown_recovery_days(series)`：最大回撤谷底到净值修复的自然日数（未修复 None，无回撤 0）
+- `rolling_return_summary(returns, window=252)`：滚动窗口累计收益分布 min/median/max
+- `benchmark_comparison(fund_points, basis, index_points)`：(超额累计收益, 近似跟踪误差)——按日期对齐，跟踪误差 = 对齐日收益差的年化标准差（无披露实测值的近似口径）
 - `fund_concentration(holdings, fund_id)`：最新报告期前十大集中度（%）与持仓个股数
 - `holdings_overlap(holdings_a, holdings_b, fund_a, fund_b)`：两基金最新报告期持仓（按股票名）Jaccard 重叠率与共同个股
+- `market_split(holdings)`：按股票代码形态分类的市场分布（6 位数字=A股、5 位数字=港股、字母=美股等海外），各类占净值比例合计
 
 这些函数不依赖 LLM，结果写入 Evidence（type=calculation）。
 
+超额收益的基准解析（启发式，V1 简化口径）：
+- `resolve_benchmark_code(fund)`：基准文本含"中证500"→sh000905、"沪深300"→sh000300、"创业板"→sz399006；
+  文本未命中时增强指数型缺省中证500；其余返回 None（不计算超额，由报告注明）。
+- 已知简化：混合型基准常为"股 + 债"复合，按股票部分近似。
+
 PeerComparison 合同（fund_comparison 任务专属扩展）：
-- `rows`：全部基金同口径同区间指标（含区间起止 / 净值点数 / 累计收益 / 净值口径）；
-- `concentration` / `overlaps`：持仓集中度与两两重叠，**仅对比任务计算**（research-with-peers 不产生持仓 Evidence，保持既有 Evidence 计数）；数据缺失时对应维度为 None / 空列表，不编造。
+- `rows`：全部基金同口径同区间指标（含区间起止 / 净值点数 / 累计收益 / 净值口径 / sortino / benchmark_code / excess_return / tracking_error）；
+- `concentration` / `overlaps`：持仓集中度与两两重叠，**仅对比任务计算**（research-with-peers 的持仓维度走 `AnalysisResult.holdings_metrics`）；数据缺失时对应维度为 None / 空列表，不编造。
 
 ---
 
@@ -510,7 +539,8 @@ class Report(BaseModel):
 
     executive_summary: str
     fund_overview: list[FundSummary]
-    holdings_analysis: str | None            # 持仓概览（最新报告期前十大，确定性模板）
+    holdings_analysis: str | None            # 持仓概览（前十大 + 集中度/市场分布/行业配置/资产配置，确定性模板）
+    cost_and_rating: str | None              # 费率 / 评级 / 同类排名（确定性模板；排名渲染为池内分位 + 原始名次 + 类型标注，跨类型不可直接比较）
     performance_analysis: str
     risk_analysis: str
     peer_comparison: str | None

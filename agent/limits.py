@@ -12,7 +12,7 @@ THESIS_MAX_LIST_ITEMS = 5  # positives / negatives / risks / key_assumptions / d
 THESIS_MAX_ITEM_CHARS = 80  # 上述列表单条文本字数上限
 
 # ---- LLM 生成 ----
-LLM_MAX_TOKENS = 4000  # chat/completions 输出 token 上限
+LLM_MAX_TOKENS = 8000  # chat/completions 输出 token 上限（4000 实测会被长 thesis 输出截断）
 
 # ---- Collector 并发 ----
 COLLECTOR_FUND_CONCURRENCY = 4  # 同时采集的基金数上限

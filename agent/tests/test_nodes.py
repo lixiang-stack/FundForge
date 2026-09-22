@@ -128,19 +128,25 @@ class TestCollectorNode:
             assert summary.id == FUND_CODE
             assert summary.name == "交银优择回报A"
 
-            # 至少 1 条 Evidence（info + performance + holdings 共 3 条）
-            assert len(out["evidence"]) == 3
+            # info/performance/holdings/行业配置/资产配置/费率/业绩排名/评级 各 1 条 + 基准指数 1 条
+            assert len(out["evidence"]) == 9
             types = {e.evidence_type for e in out["evidence"]}
             assert types == {"fund_data"}
             assert all(e.raw_ref for e in out["evidence"])
 
-            # ToolCallRecord：info + performance + holdings 各一次，全部成功
-            assert len(out["tool_calls"]) == 3
+            # ToolCallRecord：8 个基金 Tool + 1 个基准指数 Tool，全部成功
+            assert len(out["tool_calls"]) == 9
             assert all(t.success for t in out["tool_calls"])
             assert {t.tool_name for t in out["tool_calls"]} == {
                 "get_fund_info",
                 "get_fund_performance",
                 "get_fund_holdings",
+                "get_fund_industry_alloc",
+                "get_fund_asset_allocation",
+                "get_fund_fees",
+                "get_fund_achievement",
+                "get_fund_rating",
+                "get_index_data",
             }
 
             # 完整数据写入外部 Store
@@ -173,9 +179,9 @@ class TestCollectorNode:
             }
             out = node(state)
 
-            assert len(out["tool_calls"]) == 3
+            assert len(out["tool_calls"]) == 9
             assert all(t.success for t in out["tool_calls"])
-            # 3 个 Tool 并发执行：在途峰值应 ≥ 2（顺序执行恒为 1）
+            # 多个 Tool 并发执行：在途峰值应 ≥ 2（顺序执行恒为 1）
             assert tracking.max_in_flight >= 2
         finally:
             client.close()
@@ -195,8 +201,11 @@ class TestCollectorNode:
 
             assert out["fund_ids"] == [FUND_CODE, "000001"]
             assert [s.id for s in out["funds_summary"]] == [FUND_CODE, "000001"]
-            # 并发不改变记录顺序：先第一只基金的 3 次调用，再第二只
-            assert [t.arguments["fund_id"] for t in out["tool_calls"]] == [FUND_CODE] * 3 + ["000001"] * 3
+            # 并发不改变记录顺序：先第一只基金的 8 次调用，再第二只；指数调用附于其后
+            fund_calls = [t for t in out["tool_calls"] if t.arguments.get("fund_id")]
+            index_calls = [t for t in out["tool_calls"] if t.tool_name == "get_index_data"]
+            assert [t.arguments["fund_id"] for t in fund_calls] == [FUND_CODE] * 8 + ["000001"] * 8
+            assert [t.tool_name for t in index_calls] == ["get_index_data"]
         finally:
             client.close()
 
@@ -261,9 +270,14 @@ class TestCollectorNode:
             }
             out = node(state)
             assert out["funds_summary"] == []
-            assert len(out["tool_calls"]) == 3
-            assert all(not t.success for t in out["tool_calls"])
-            assert all(t.error for t in out["tool_calls"])
+            assert len(out["tool_calls"]) == 8
+            # 7 个直连 collector 的 Tool 全部失败；资产配置因无持仓报告期依据
+            # 短路返回空列表（未发起请求），属正常降级
+            failed = [t for t in out["tool_calls"] if not t.success]
+            succeeded = [t for t in out["tool_calls"] if t.success]
+            assert len(failed) == 7
+            assert all(t.error for t in failed)
+            assert [t.tool_name for t in succeeded] == ["get_fund_asset_allocation"]
             assert any("完全失败" in i for i in out["data_quality_issues"])
         finally:
             client.close()

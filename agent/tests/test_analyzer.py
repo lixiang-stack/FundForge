@@ -168,15 +168,15 @@ class TestAnalyzerHoldingsComparison:
             assert pc.overlaps[0].overlap_ratio == 1.0
             assert pc.overlaps[0].common_names == ["宁德时代", "贵州茅台"]
 
-            # Evidence：2 条指标 + 2 条集中度 + 1 条重叠
+            # Evidence：2 条指标 + 2 条持仓分析 + 1 条重叠
             assert len(out["evidence"]) == 5
             kinds = {e.value.get("metric") for e in out["evidence"] if e.value.get("metric")}
-            assert kinds == {"top10_concentration", "holdings_overlap"}
+            assert kinds == {"holdings_metrics", "holdings_overlap"}
             assert out["data_quality_issues"] == []
         finally:
             client.close()
 
-    def test_research_with_peers_skips_holdings_comparison(self):
+    def test_research_with_peers_gets_holdings_metrics(self):
         tools, store, client = make_tools()
         try:
             self._collect(tools, ["000001", FUND_CODE])
@@ -193,10 +193,16 @@ class TestAnalyzerHoldingsComparison:
 
             pc = out["analysis"].peer_comparison
             assert pc is not None
+            # PeerComparison 持仓维度仅对比任务填充；research 走 holdings_metrics
             assert pc.concentration == []
             assert pc.overlaps == []
-            # 仅 2 条指标 Evidence，无持仓 Evidence（保住 eval 精确计数基线）
-            assert len(out["evidence"]) == 2
+            # 集中度与市场分布对 research 同样计算（每基金一条持仓分析 Evidence）
+            metrics = {m.fund_id: m for m in out["analysis"].holdings_metrics}
+            assert set(metrics) == {"000001", FUND_CODE}
+            assert all(m.top10_sum == 3.12 + 2.85 for m in metrics.values())
+            assert all(m.market_split.a_share_ratio == 3.12 + 2.85 for m in metrics.values())
+            # 2 条指标 Evidence + 2 条持仓分析 Evidence
+            assert len(out["evidence"]) == 4
         finally:
             client.close()
 

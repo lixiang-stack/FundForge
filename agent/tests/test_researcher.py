@@ -83,8 +83,8 @@ class TestGetFundHoldings:
                 },
             }
             out = CollectorNode(tools)(state)
-            # info + performance + holdings = 3 条 fund_data 证据
-            assert len(out["evidence"]) == 3
+            # info/performance/holdings/行业配置/资产配置/费率/业绩排名/评级 + 基准指数 = 9 条
+            assert len(out["evidence"]) == 9
             holdings_ev = [e for e in out["evidence"] if "持仓" in (e.source_detail or "")]
             assert holdings_ev and holdings_ev[0].data_quality == "complete"
             assert holdings_ev[0].value["top_holdings"][0]["stock_name"] == "贵州茅台"

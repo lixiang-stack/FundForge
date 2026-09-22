@@ -4,23 +4,29 @@
 """
 
 import math
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from analysis.engine import (
     annualized_return,
     annualized_volatility,
+    benchmark_comparison,
     compute_fund_metrics,
     cumulative_return,
+    drawdown_recovery_days,
     fund_concentration,
     holdings_overlap,
+    market_split,
     max_drawdown,
     nav_value,
+    rolling_return_summary,
     sharpe_ratio,
     simple_returns,
+    sortino_ratio,
+    yearly_returns,
 )
-from domain.fund import Holding, NAVPoint
+from domain.fund import Fund, Holding, IndexPoint, NAVPoint, resolve_benchmark_code
 
 
 def _point(d: str, unit: float | None = None, acc: float | None = None) -> NAVPoint:
@@ -29,6 +35,12 @@ def _point(d: str, unit: float | None = None, acc: float | None = None) -> NAVPo
 
 def _h(name: str, ratio: float | None, period: str = "2026年2季度股票投资明细") -> Holding:
     return Holding(stock_code=f"c-{name}", stock_name=name, hold_ratio=ratio, report_date=period)
+
+
+def _hold(
+    code: str, name: str, ratio: float | None, period: str = "2026年2季度股票投资明细"
+) -> Holding:
+    return Holding(stock_code=code, stock_name=name, hold_ratio=ratio, report_date=period)
 
 
 class TestSimpleReturns:
@@ -120,6 +132,182 @@ class TestSharpe:
         assert sharpe_ratio([0.01]) is None
 
 
+class TestSortino:
+    def test_zero_mean_returns(self):
+        # r = [+0.01, -0.01]：mean = 0 → Sortino 0（下行偏差 > 0）
+        assert sortino_ratio([0.01, -0.01]) == 0.0
+
+    def test_known_ratio(self):
+        # r = [-0.01, 0.03]：mean = 0.01，下行偏差 = sqrt(0.01²/2)
+        # Sortino = 0.01 / (0.01/sqrt(2)) * sqrt(252) = sqrt(2) * sqrt(252)
+        assert sortino_ratio([-0.01, 0.03]) == pytest.approx(math.sqrt(2) * math.sqrt(252))
+
+    def test_no_downside_gives_none(self):
+        # 全部为正收益 → 下行偏差 0 → None
+        assert sortino_ratio([0.01, 0.03]) is None
+
+    def test_constant_returns_gives_none(self):
+        assert sortino_ratio([0.02, 0.02]) is None
+
+    def test_with_risk_free(self):
+        # r = [-0.01, 0.03], rf = 0.01 → excess = [-0.02, 0.02]，mean = 0 → Sortino 0
+        assert sortino_ratio([-0.01, 0.03], risk_free_daily=0.01) == pytest.approx(0.0, abs=1e-12)
+
+    def test_insufficient_returns(self):
+        assert sortino_ratio([0.01]) is None
+
+
+class TestYearlyReturns:
+    def test_grouped_by_year(self):
+        series = [
+            (date(2023, 1, 1), 1.0),
+            (date(2023, 12, 31), 1.1),
+            (date(2024, 1, 2), 1.2),
+            (date(2024, 6, 1), 1.32),
+        ]
+        assert yearly_returns(series) == {"2023": pytest.approx(0.1), "2024": pytest.approx(0.1)}
+
+    def test_single_point_year_excluded(self):
+        # 每年只有 1 个有效点 → 无可计算年份
+        series = [(date(2023, 1, 1), 1.0), (date(2024, 6, 1), 1.1)]
+        assert yearly_returns(series) == {}
+
+    def test_loss_year(self):
+        series = [(date(2023, 1, 1), 2.0), (date(2023, 12, 31), 1.0)]
+        assert yearly_returns(series) == {"2023": pytest.approx(-0.5)}
+
+
+class TestDrawdownRecoveryDays:
+    def test_known_recovery(self):
+        # 峰值 2.0（01-02）→ 谷底 0.5（01-05）→ 01-10 收复 → 5 个自然日
+        series = [
+            (date(2024, 1, 1), 1.0),
+            (date(2024, 1, 2), 2.0),
+            (date(2024, 1, 3), 1.0),
+            (date(2024, 1, 5), 0.5),
+            (date(2024, 1, 10), 2.0),
+        ]
+        assert drawdown_recovery_days(series) == 5
+
+    def test_not_recovered_gives_none(self):
+        series = [
+            (date(2024, 1, 1), 1.0),
+            (date(2024, 1, 2), 2.0),
+            (date(2024, 1, 3), 1.0),
+        ]
+        assert drawdown_recovery_days(series) is None
+
+    def test_no_drawdown_is_zero(self):
+        series = [(date(2024, 1, 1), 1.0), (date(2024, 1, 2), 2.0), (date(2024, 1, 3), 3.0)]
+        assert drawdown_recovery_days(series) == 0
+
+    def test_insufficient_points(self):
+        assert drawdown_recovery_days([(date(2024, 1, 1), 1.0)]) is None
+
+
+class TestRollingReturnSummary:
+    def test_window_distribution(self):
+        # r = [0.1, 0.1, -0.1]，window=2：
+        # 窗口1 [0.1, 0.1] → 1.21 - 1 = 0.21；窗口2 [0.1, -0.1] → 0.99 - 1 = -0.01
+        s = rolling_return_summary([0.1, 0.1, -0.1], window=2)
+        assert s.window_days == 2
+        assert s.min == pytest.approx(-0.01)
+        assert s.max == pytest.approx(0.21)
+        assert s.median == pytest.approx(0.1)  # 两个窗口取平均
+
+    def test_default_window_single_roll(self):
+        # 252 个恒定收益 → 恰好 1 个默认窗口：(1.001)^252 - 1
+        s = rolling_return_summary([0.001] * 252)
+        assert s.min == pytest.approx(1.001**252 - 1)
+        assert s.max == pytest.approx(s.min)
+
+    def test_insufficient_returns_gives_none(self):
+        assert rolling_return_summary([0.01], window=2) is None
+
+
+class TestMarketSplit:
+    def test_classified_by_code_pattern(self):
+        holdings = [
+            _hold("600519", "贵州茅台", 3.12),
+            _hold("300750", "宁德时代", 2.85),
+            _hold("00700", "腾讯控股", 2.0),
+            _hold("AAPL", "苹果", 1.0),
+        ]
+        s = market_split(holdings)
+        assert s.a_share_ratio == pytest.approx(3.12 + 2.85)
+        assert s.hk_share_ratio == pytest.approx(2.0)
+        assert s.overseas_ratio == pytest.approx(1.0)
+        assert s.other_ratio is None
+
+    def test_unrecognized_code_to_other(self):
+        s = market_split([_hold("ABC123", "未知", 1.5)])
+        assert s.other_ratio == pytest.approx(1.5)
+        assert s.a_share_ratio is None
+
+    def test_only_latest_period(self):
+        holdings = [
+            _hold("600519", "贵州茅台", 3.12),
+            _hold("00700", "旧港股", 9.0, period="2025年4季度股票投资明细"),
+        ]
+        s = market_split(holdings)
+        assert s.a_share_ratio == pytest.approx(3.12)
+        assert s.hk_share_ratio is None
+
+    def test_no_valid_ratios_gives_none(self):
+        assert market_split([_hold("600519", "贵州茅台", None)]) is None
+
+    def test_empty_holdings(self):
+        assert market_split([]) is None
+
+
+class TestBenchmarkComparison:
+    def _index(self, d: str, close: float) -> IndexPoint:
+        return IndexPoint(nav_date=date.fromisoformat(d), close=close)
+
+    def test_excess_and_tracking_error(self):
+        # 基金 [1.0, 1.1, 1.21]（累计 21%）；指数 [100, 102, 104.04]（累计 4.04%）
+        # 超额 = 0.21 - 0.0404；日收益差 [0.08, 0.08] 恒定 → 跟踪误差 0
+        fund = [_point("2024-01-01", unit=1.0), _point("2024-01-02", unit=1.1), _point("2024-01-03", unit=1.21)]
+        index = [self._index("2024-01-01", 100.0), self._index("2024-01-02", 102.0), self._index("2024-01-03", 104.04)]
+        excess, te = benchmark_comparison(fund, "unit", index)
+        assert excess == pytest.approx(0.21 - 0.0404)
+        assert te == pytest.approx(0.0, abs=1e-12)
+
+    def test_missing_index_dates_are_skipped(self):
+        # 指数缺 01-02 → 对齐仅剩两端点，累计口径不变
+        fund = [_point("2024-01-01", unit=1.0), _point("2024-01-02", unit=1.1), _point("2024-01-03", unit=1.21)]
+        index = [self._index("2024-01-01", 100.0), self._index("2024-01-03", 104.04)]
+        excess, _ = benchmark_comparison(fund, "unit", index)
+        assert excess == pytest.approx(0.21 - 0.0404)
+
+    def test_insufficient_alignment_gives_none(self):
+        fund = [_point("2024-01-01", unit=1.0), _point("2024-01-02", unit=1.1)]
+        index = [self._index("2024-01-01", 100.0)]
+        assert benchmark_comparison(fund, "unit", index) == (None, None)
+
+
+class TestResolveBenchmarkCode:
+    def test_text_hit_takes_priority(self):
+        fund = Fund(id="1", name="f", benchmark="中证500指数收益率×95%+活期存款利率×5%", source="s", as_of=datetime.now())
+        assert resolve_benchmark_code(fund) == "sh000905"
+
+    def test_hs300_text(self):
+        fund = Fund(id="1", name="f", benchmark="50%×沪深300指数收益率+50%×中债指数收益率", source="s", as_of=datetime.now())
+        assert resolve_benchmark_code(fund) == "sh000300"
+
+    def test_sse_index_text(self):
+        fund = Fund(id="1", name="f", benchmark="上证指数收益率×80%+同业存款×20%", source="s", as_of=datetime.now())
+        assert resolve_benchmark_code(fund) == "sh000001"
+
+    def test_enhanced_index_fund_defaults_to_csi500(self):
+        fund = Fund(id="1", name="f", fund_type="股票型-增强指数", source="s", as_of=datetime.now())
+        assert resolve_benchmark_code(fund) == "sh000905"
+
+    def test_unresolvable_returns_none(self):
+        fund = Fund(id="1", name="f", benchmark="中债综合全价指数收益率", source="s", as_of=datetime.now())
+        assert resolve_benchmark_code(fund) is None
+
+
 class TestNavValue:
     def test_acc_basis_returns_acc(self):
         assert nav_value(_point("2024-01-01", unit=1.0, acc=1.5), "acc") == 1.5
@@ -153,6 +341,12 @@ class TestComputeFundMetrics:
         assert m.annualized_return == pytest.approx(0.21, rel=1e-9)
         # 峰值 1.3 → 末值 1.21 → 回撤 1.21/1.3 - 1
         assert m.max_drawdown == pytest.approx(1.21 / 1.3 - 1)
+        # 谷底即末点 → 未修复；分年度：2023 年 1.0→1.3，2024 年单点不列入
+        assert m.max_drawdown_recovery_days is None
+        assert m.yearly_returns == {"2023": pytest.approx(0.3)}
+        # 存在负收益 → Sortino 可计算；不足 252 个收益 → 无滚动摘要
+        assert m.sortino is not None
+        assert m.rolling_1y is None
         assert m.data_quality == "complete"
 
     def test_single_point_is_partial(self):

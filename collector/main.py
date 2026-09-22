@@ -5,6 +5,7 @@ FundForge Collector Service - akshare 数据采集薄包装层
 """
 
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -97,13 +98,13 @@ FIELD_MAPS = {
         "持仓市值": "hold_value",
         "季度": "report_date",
     },
+    # 雪球 fund_individual_achievement_xq 实际返回列（年度业绩 + 阶段业绩）
     "achievement": {
+        "业绩类型": "performance_type",
         "周期": "period",
-        "收益率": "return_rate",
-        "同类平均": "category_avg",
-        "同类排名": "category_rank",
-        "排名四分位": "quartile",
-        "同类基金数": "fund_count",
+        "本产品区间收益": "return_rate",
+        "本产品最大回撒": "max_drawdown",
+        "周期收益同类排名": "category_rank",
     },
     "analysis": {
         "周期": "period",
@@ -131,7 +132,36 @@ FIELD_MAPS = {
         "投资目标": "investment_objective",
         "业绩比较基准": "benchmark",
     },
+    # 天天基金 fund_portfolio_industry_allocation_em 返回列（投资组合-行业配置）
+    "industry_alloc": {
+        "序号": "row_no",
+        "行业类别": "industry",
+        "占净值比例": "nav_ratio",
+        "市值": "market_value",
+        "截止时间": "report_date",
+    },
+    # 雪球 fund_individual_detail_hold_xq 返回列（资产配置，按财报日期）
+    "asset_allocation": {
+        "资产类型": "asset_type",
+        "仓位占比": "percent",
+    },
+    # 天天基金 fund_rating_all 返回列（基金评级总汇）
+    "fund_rating": {
+        "代码": "fund_code",
+        "简称": "fund_name",
+        "基金经理": "fund_manager",
+        "基金公司": "fund_company",
+        "5星评级家数": "five_star_count",
+        "上海证券": "rating_sh",
+        "招商证券": "rating_zs",
+        "济安金信": "rating_ja",
+        "晨星评级": "rating_mx",
+        "手续费": "fee_rate",
+        "类型": "fund_type",
+    },
 }
+
+INDEX_DAILY_COLUMNS = ["date", "close"]  # 指数日线仅保留计算超额收益所需列
 
 
 # ---- Helpers ----
@@ -325,6 +355,96 @@ def get_bond_holdings(code: str, date: str | None = Query(None, description="年
     return df_to_response(df, "bond_holding")
 
 
+# ---- Industry Allocation ----
+
+@app.get("/api/funds/{code}/industry")
+@akshare_call
+def get_industry_allocation(code: str, date: str | None = Query(None, description="年份，缺省取最新可用披露")):
+    """基金行业配置（天天基金-投资组合-行业配置）"""
+    df = _holdings_df(ak.fund_portfolio_industry_allocation_em, code, date)
+    return df_to_response(df, "industry_alloc")
+
+
+# ---- Asset Allocation (Xueqiu) ----
+
+@app.get("/api/funds/{code}/allocation")
+@akshare_call
+def get_asset_allocation(code: str, date: str = Query(..., description="财报日期 YYYYMMDD")):
+    """基金资产配置：股票/债券/现金等仓位占比（雪球源，按财报日期）"""
+    df = ak.fund_individual_detail_hold_xq(symbol=code, date=date)
+    return df_to_response(df, "asset_allocation")
+
+
+# ---- Operating Fees ----
+
+def _parse_fee_percent(raw) -> float | None:
+    """「1.00%（每年）」→ 1.00；无数字返回 None。"""
+    if raw is None:
+        return None
+    m = re.search(r"\d+(?:\.\d+)?", str(raw))
+    return float(m.group()) if m else None
+
+
+@app.get("/api/funds/{code}/fees")
+@akshare_call
+def get_fund_fees(code: str):
+    """基金运作费用：管理费率/托管费率/销售服务费率（天天基金源，单位 %）。
+
+    akshare 返回单行宽表（列 0..5 交替为费率名称与数值），此处规整为结构化记录。
+    """
+    df = ak.fund_fee_em(symbol=code, indicator="运作费用")
+    if df is None or df.empty or df.shape[1] < 6:
+        return []
+    row = df.iloc[0].tolist()
+    return [
+        {
+            "management_fee_rate": _parse_fee_percent(row[1]),
+            "custodian_fee_rate": _parse_fee_percent(row[3]),
+            "service_fee_rate": _parse_fee_percent(row[5]),
+        }
+    ]
+
+
+# ---- Fund Rating ----
+
+_RATING_TTL_SECONDS = 24 * 3600  # 评级为季度级低频数据，按天刷新足够
+_rating_cache: pd.DataFrame | None = None
+_rating_fetched_at: float = 0.0
+
+
+def _rating_df() -> pd.DataFrame:
+    """评级总汇带 TTL 的进程内缓存：fund_rating_all 为全市场全量拉取，逐请求拉取代价过高。
+
+    缓存按 _RATING_TTL_SECONDS 过期重拉，进程长驻时数据最多滞后一个 TTL；
+    重拉失败时降级返回旧缓存（低频数据，旧值优于请求失败），无旧缓存则抛出。
+    """
+    global _rating_cache, _rating_fetched_at
+    now = time.time()
+    if _rating_cache is not None and now - _rating_fetched_at < _RATING_TTL_SECONDS:
+        return _rating_cache
+    try:
+        df = ak.fund_rating_all()
+        _rating_cache = df
+        _rating_fetched_at = now
+        return df
+    except Exception as e:
+        if _rating_cache is not None:
+            logger.warning(f"fund_rating_all refresh failed, serving stale cache: {e}")
+            return _rating_cache
+        raise
+
+
+@app.get("/api/funds/{code}/rating")
+@akshare_call
+def get_fund_rating(code: str):
+    """基金评级（天天基金评级总汇：上海证券/招商证券/济安金信/晨星），无评级返回空列表"""
+    df = _rating_df()
+    rows = df[df["代码"] == code]
+    if rows.empty:
+        return []
+    return df_to_response(rows, "fund_rating")
+
+
 # ---- Achievement (Xueqiu) ----
 
 @app.get("/api/funds/{code}/achievement")
@@ -386,6 +506,42 @@ def get_etf_nav(
 ):
     """ETF基金历史净值"""
     df = ak.fund_etf_fund_info_em(fund=code, start_date=start_date, end_date=end_date)
+    return df_to_response(df)
+
+
+# ---- Index Daily ----
+
+def _index_daily_sina(code: str, start_date: str, end_date: str) -> pd.DataFrame | None:
+    """新浪指数日线（无日期参数，全量返回）→ 按 YYYYMMDD 闭区间裁剪。"""
+    df = ak.stock_zh_index_daily(symbol=code)
+    if df is None or df.empty:
+        return df
+    dates = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
+    return df[(dates >= start_date) & (dates <= end_date)]
+
+
+@app.get("/api/index/{code}/daily")
+@akshare_call
+def get_index_daily(
+    code: str,
+    start_date: str = Query("19900101", description="开始日期 YYYYMMDD"),
+    end_date: str = Query("20500101", description="结束日期 YYYYMMDD"),
+):
+    """指数日线行情（code 需带市场前缀，如 sh000905 中证500）。
+
+    东财 push2his 对连续请求反爬断连（实测连续请求即被服务端断开，秒级重试无效），
+    主用东财，失败或空结果时回退新浪源。
+    """
+    try:
+        df = ak.stock_zh_index_daily_em(symbol=code, start_date=start_date, end_date=end_date)
+    except Exception as e:
+        logger.warning(f"index daily em failed, fallback to sina: {code} ({e})")
+        df = None
+    if df is None or df.empty:
+        df = _index_daily_sina(code, start_date, end_date)
+    if df is None or df.empty:
+        return []
+    df = df[INDEX_DAILY_COLUMNS].rename(columns={"date": "trade_date"})
     return df_to_response(df)
 
 
