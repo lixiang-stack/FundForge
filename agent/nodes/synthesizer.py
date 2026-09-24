@@ -91,7 +91,8 @@ class SynthesizerNode:
                 else _executive_summary(primary, summaries, analysis, thesis)
             ),
             fund_overview=summaries,
-            holdings_analysis=_holdings_text(summaries, evidence),
+            holdings_analysis=_holdings_text(summaries, evidence, analysis),
+            cost_and_rating=_fund_facts_text(summaries, evidence),
             performance_analysis=(
                 _comparison_performance_text(summaries, analysis)
                 if is_comparison
@@ -182,16 +183,49 @@ def _fund_label(fund_id: str, names: dict[str, str]) -> str:
     return f"{fund_id} {name}" if name else fund_id
 
 
+def _evidence_value_map(evidence: list, key: str) -> dict[str, dict]:
+    """按 value 顶层键筛选证据，返回 fund_id → value 映射（同基金取最后一条）。"""
+    by_fund: dict[str, dict] = {}
+    for e in evidence:
+        value = e.get("value") if isinstance(e, dict) else getattr(e, "value", None)
+        if isinstance(value, dict) and value.get("fund_id") and key in value:
+            by_fund[value["fund_id"]] = value
+    return by_fund
+
+
 def _performance_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> str:
     if analysis is None:
         return ""
     perf = analysis.performance
     subject = f"{primary.id} {primary.name}（主体基金）：" if primary else ""
-    return (
+    text = (
         f"{subject}区间 {perf.period_start} ~ {perf.period_end}"
         f"（{perf.nav_point_count} 个净值点），"
         f"累计收益 {_fmt_pct(perf.cumulative_return)}，年化收益 {_fmt_pct(perf.annualized_return)}。"
     )
+    parts = [text]
+    if perf.yearly_returns:
+        yearly = "、".join(
+            f"{y}年 {_fmt_pct(r)}" for y, r in sorted(perf.yearly_returns.items()) if r is not None
+        )
+        if yearly:
+            parts.append(f"分年度收益：{yearly}。")
+    rolling = perf.rolling_1y
+    if rolling is not None and rolling.min is not None:
+        parts.append(
+            f"滚动{rolling.window_days}日（约1年）收益：最低 {_fmt_pct(rolling.min)}，"
+            f"中位 {_fmt_pct(rolling.median)}，最高 {_fmt_pct(rolling.max)}。"
+        )
+    if perf.excess_return is not None:
+        te = (
+            f"，近似跟踪误差 {_fmt_pct(perf.tracking_error)}"
+            if perf.tracking_error is not None
+            else ""
+        )
+        parts.append(
+            f"相对基准（{perf.benchmark_code}）超额收益 {_fmt_pct(perf.excess_return)}{te}。"
+        )
+    return " ".join(parts)
 
 
 def _risk_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> str:
@@ -199,12 +233,19 @@ def _risk_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> 
         return ""
     risk = analysis.risk
     sharpe = f"{risk.sharpe:.2f}" if risk.sharpe is not None else "未知"
+    sortino = f"{risk.sortino:.2f}" if risk.sortino is not None else "未知"
     subject = f"{primary.id} {primary.name}（主体基金）：" if primary else ""
-    return (
+    text = (
         f"{subject}年化波动率 {_fmt_pct(risk.annual_volatility)}，"
         f"最大回撤 {_fmt_pct(risk.max_drawdown)}，"
-        f"夏普比率 {sharpe}。"
+        f"夏普比率 {sharpe}，Sortino {sortino}。"
     )
+    if risk.max_drawdown not in (None, 0.0):
+        if risk.max_drawdown_recovery_days is not None:
+            text += f"最大回撤修复用时 {risk.max_drawdown_recovery_days} 个自然日。"
+        else:
+            text += "最大回撤截至期末尚未修复。"
+    return text
 
 
 def _peer_text(analysis: AnalysisResult | None, summaries: list[FundSummary] | None = None) -> str | None:
@@ -272,12 +313,19 @@ def _peer_rows(analysis: AnalysisResult | None) -> list:
 def _comparison_performance_text(summaries: list[FundSummary], analysis: AnalysisResult | None) -> str:
     """业绩分析（对比模式）：逐基金一行，对称呈现。"""
     names = {s.id: s.name for s in summaries}
-    lines = [
-        f"- {_fund_label(r.fund_id, names)}：区间 {r.period_start} ~ {r.period_end}"
-        f"（{r.nav_point_count} 个净值点），"
-        f"累计收益 {_fmt_pct(r.cumulative_return)}，年化收益 {_fmt_pct(r.annualized_return)}。"
-        for r in _peer_rows(analysis)
-    ]
+    lines = []
+    for r in _peer_rows(analysis):
+        excess = (
+            f"，相对基准（{r.benchmark_code}）超额 {_fmt_pct(r.excess_return)}"
+            if r.excess_return is not None
+            else ""
+        )
+        lines.append(
+            f"- {_fund_label(r.fund_id, names)}：区间 {r.period_start} ~ {r.period_end}"
+            f"（{r.nav_point_count} 个净值点），"
+            f"累计收益 {_fmt_pct(r.cumulative_return)}，年化收益 {_fmt_pct(r.annualized_return)}"
+            f"{excess}。"
+        )
     return "\n".join(lines)
 
 
@@ -287,30 +335,32 @@ def _comparison_risk_text(summaries: list[FundSummary], analysis: AnalysisResult
     lines = []
     for r in _peer_rows(analysis):
         sharpe = f"{r.sharpe:.2f}" if r.sharpe is not None else "未知"
+        sortino = f"{r.sortino:.2f}" if r.sortino is not None else "未知"
         lines.append(
             f"- {_fund_label(r.fund_id, names)}：年化波动率 {_fmt_pct(r.annual_volatility)}，"
-            f"最大回撤 {_fmt_pct(r.max_drawdown)}，夏普比率 {sharpe}。"
+            f"最大回撤 {_fmt_pct(r.max_drawdown)}，夏普比率 {sharpe}，Sortino {sortino}。"
         )
     return "\n".join(lines)
 
 
 def _comparison_peer_text(analysis: AnalysisResult | None, summaries: list[FundSummary]) -> str | None:
-    """核心指标对比（对比模式）：Markdown 表格 + 持仓集中度/重叠度小节。"""
+    """核心指标对比（对比模式）：Markdown 表格 + 持仓集中度/重叠度小节（同口径指标）。"""
     if analysis is None or analysis.peer_comparison is None:
         return None
     pc = analysis.peer_comparison
     names = {s.id: s.name for s in summaries}
     types = {s.id: s.fund_type for s in summaries}
     lines = [
-        "| 基金 | 类型 | 累计收益 | 年化收益 | 年化波动 | 最大回撤 | 夏普 |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| 基金 | 类型 | 累计收益 | 年化收益 | 年化波动 | 最大回撤 | 夏普 | Sortino |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in pc.rows:
         sharpe = f"{r.sharpe:.2f}" if r.sharpe is not None else "未知"
+        sortino = f"{r.sortino:.2f}" if r.sortino is not None else "未知"
         lines.append(
             f"| {_fund_label(r.fund_id, names)} | {types.get(r.fund_id) or '类型未知'} "
             f"| {_fmt_pct(r.cumulative_return)} | {_fmt_pct(r.annualized_return)} "
-            f"| {_fmt_pct(r.annual_volatility)} | {_fmt_pct(r.max_drawdown)} | {sharpe} |"
+            f"| {_fmt_pct(r.annual_volatility)} | {_fmt_pct(r.max_drawdown)} | {sharpe} | {sortino} |"
         )
     lines.append(_ALIGNMENT_NOTE)
 
@@ -350,8 +400,12 @@ def _comparison_manager_text(summaries: list[FundSummary]) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _holdings_text(summaries: list[FundSummary], evidence: list) -> str | None:
-    """持仓概览（确定性模板）：从 holdings evidence 汇总各基金最新报告期前十大。"""
+def _holdings_text(
+    summaries: list[FundSummary],
+    evidence: list,
+    analysis: AnalysisResult | None = None,
+) -> str | None:
+    """持仓概览（确定性模板）：各基金最新报告期前十大 + 集中度与市场分布。"""
     by_fund: dict[str, dict] = {}
     for e in evidence:
         value = e.get("value") if isinstance(e, dict) else getattr(e, "value", None)
@@ -360,22 +414,152 @@ def _holdings_text(summaries: list[FundSummary], evidence: list) -> str | None:
         fund_id = value.get("fund_id")
         if fund_id:
             by_fund[fund_id] = value
-    if not by_fund:
+    metrics = {m.fund_id: m for m in (analysis.holdings_metrics if analysis else [])}
+    industry_map = _evidence_value_map(evidence, "top_industries")
+    allocation_map = _evidence_value_map(evidence, "allocation")
+    if not by_fund and not metrics and not industry_map and not allocation_map:
         return None
     lines = []
     for s in summaries:
         data = by_fund.get(s.id)
-        if data is None:
-            continue
-        period = data.get("latest_report_period")
-        period_label = f"（报告期 {period}）" if period else ""
-        items = "、".join(
-            f"{h.get('stock_name')} {h.get('hold_ratio'):.2f}%"
-            if h.get("hold_ratio") is not None
-            else str(h.get("stock_name"))
-            for h in data["top_holdings"]
-        )
-        lines.append(f"- **{s.id} {s.name}**{period_label}：{items}")
+        if data is not None:
+            period = data.get("latest_report_period")
+            period_label = f"（报告期 {period}）" if period else ""
+            items = "、".join(
+                f"{h.get('stock_name')} {h.get('hold_ratio'):.2f}%"
+                if h.get("hold_ratio") is not None
+                else str(h.get("stock_name"))
+                for h in data["top_holdings"]
+            )
+            lines.append(f"- **{s.id} {s.name}**{period_label}：{items}")
+        m = metrics.get(s.id)
+        if m is not None:
+            if m.top10_sum is not None:
+                lines.append(
+                    f"  - 持仓集中度：前十大合计 {m.top10_sum:.2f}%（{m.holding_count} 只）"
+                )
+            split_bits = _market_split_bits(m.market_split)
+            if split_bits:
+                lines.append(f"  - 市场分布（占披露持仓净值比）：{split_bits}")
+        industry = industry_map.get(s.id)
+        if industry and industry.get("top_industries"):
+            bits = "、".join(
+                f"{t.get('industry')} {t.get('nav_ratio'):.2f}%"
+                for t in industry["top_industries"]
+                if t.get("industry") and t.get("nav_ratio") is not None
+            )
+            if bits:
+                lines.append(f"  - 行业配置（{industry.get('latest_report_date') or '最新报告期'}前五）：{bits}")
+        allocation = allocation_map.get(s.id)
+        if allocation and allocation.get("allocation"):
+            bits = "、".join(
+                f"{a.get('asset_type')} {a.get('percent'):.2f}%"
+                for a in allocation["allocation"]
+                if a.get("asset_type") and a.get("percent") is not None
+            )
+            if bits:
+                lines.append(f"  - 资产配置：{bits}")
+    return "\n".join(lines) if lines else None
+
+
+def _market_split_bits(split) -> str:
+    """MarketSplit → 「A股 xx%、港股 xx%…」片段；全空返回空串。"""
+    if split is None:
+        return ""
+    labels = [
+        ("a_share_ratio", "A股"),
+        ("hk_share_ratio", "港股"),
+        ("overseas_ratio", "美股(海外)"),
+        ("other_ratio", "其他"),
+    ]
+    bits = [
+        # market_split 各字段已是百分数（"acc"口径注释见 engine.market_split），
+        # 不能走 _fmt_pct（其语义为小数×100），否则渲染成 5989.00% 这类双重百分比
+        f"{label} {getattr(split, key):.2f}%"
+        for key, label in labels
+        if getattr(split, key) is not None
+    ]
+    return "、".join(bits)
+
+
+def _cost_rating_lines(summaries: list[FundSummary], evidence: list) -> list[str]:
+    """费率与评级（确定性模板）：逐基金一行；两者皆缺的基金整行省略。"""
+    fees_map = _evidence_value_map(evidence, "management_fee_rate")
+    rating_map = _evidence_value_map(evidence, "five_star_count")
+    rating_labels = [
+        ("rating_sh", "上海证券"),
+        ("rating_zs", "招商证券"),
+        ("rating_ja", "济安金信"),
+        ("rating_mx", "晨星"),
+    ]
+    lines = []
+    for s in summaries:
+        parts = []
+        fees = fees_map.get(s.id)
+        if fees and fees.get("management_fee_rate") is not None:
+            bits = f"管理费 {fees['management_fee_rate']:.2f}%/年"
+            if fees.get("custodian_fee_rate") is not None:
+                bits += f"、托管费 {fees['custodian_fee_rate']:.2f}%/年"
+            if fees.get("service_fee_rate"):
+                bits += f"、销售服务费 {fees['service_fee_rate']:.2f}%/年"
+            parts.append(bits)
+        rating = rating_map.get(s.id)
+        if rating:
+            rbits = "、".join(
+                f"{label} {rating[key]:.0f}星"
+                for key, label in rating_labels
+                if rating.get(key) is not None
+            )
+            stars = (
+                f"（{rating['five_star_count']} 家五星）"
+                if rating.get("five_star_count") is not None
+                else ""
+            )
+            if rbits:
+                parts.append(f"第三方评级{stars}：{rbits}")
+        if parts:
+            lines.append(f"- **{s.id} {s.name}**：{'；'.join(parts)}")
+    return lines
+
+
+def _rank_bits(rank: str | None) -> str | None:
+    """\"308/1070\" → \"前 28.8%\"（池内分位，越小越好）；无法解析返回 None。"""
+    if not rank or "/" not in rank:
+        return None
+    try:
+        num, denom = (int(x) for x in rank.split("/", 1))
+    except ValueError:
+        return None
+    if denom <= 0 or num < 0:
+        return None
+    return f"前 {num / denom * 100:.1f}%"
+
+
+def _achievement_facts_lines(summaries: list[FundSummary], evidence: list) -> list[str]:
+    """同类排名事实（每基金一行）：标注各自基金类型与池内分位，跨类型不可直接比较。"""
+    ach_map = _evidence_value_map(evidence, "achievement")
+    lines = []
+    for s in summaries:
+        rows = (ach_map.get(s.id) or {}).get("achievement") or []
+        bits = []
+        for r in rows[:4]:
+            rank = r.get("category_rank")
+            if not rank:
+                continue
+            pct = _rank_bits(rank)
+            period = r.get("period") or "未知周期"
+            bits.append(f"{period} {pct}（{rank}）" if pct else f"{period}（{rank}）")
+        if bits:
+            type_label = f"（{s.fund_type}）" if s.fund_type else ""
+            lines.append(f"- **{s.id} {s.name}**{type_label}同类排名：{'、'.join(bits)}")
+    if lines:
+        lines.append("注：同类排名为数据源按基金类型划分池子的相对位置，跨类型基金之间不可直接比较。")
+    return lines
+
+
+def _fund_facts_text(summaries: list[FundSummary], evidence: list) -> str | None:
+    """每基金事实小节（费率 / 评级 / 同类排名），任一维度有数据才成节。"""
+    lines = _cost_rating_lines(summaries, evidence) + _achievement_facts_lines(summaries, evidence)
     return "\n".join(lines) if lines else None
 
 

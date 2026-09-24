@@ -140,6 +140,9 @@ export DATABASE_URL="postgres://fundforge:fundforge_dev_password@localhost:5432/
 | Detect fund manager changes                     | ./client sync managers   | /api/funds/%s/detail                     | fund_info                          |
 | Fetch historical NAV for a fund                 | ./client sync nav 519770 | /api/funds/%s/nav?indicator=%s&period=%s | fund_info,fund_nav                 |
 | Incremental NAV update for all subscribed funds | ./client sync update     | /api/funds/%s/nav?indicator=%s&period=%s | fund_info,fund_nav                 |
+| Sync benchmark index daily data                 | ./client sync benchmark  | /api/index/%s/daily                      | benchmark_index_daily              |
+
+> `sync benchmark` 拉取 `benchmark_index` 表中全部预置指数的日线（回溯 11 年，覆盖 agent 侧 10 年对齐窗口），供 alert 指标（beta/excess_return）使用；单指数失败仅告警跳过，不中断。
 
 ### Strategy management
 

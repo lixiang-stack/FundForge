@@ -40,6 +40,82 @@ class Holding(BaseModel):
     report_date: str | None = None      # 报告期（如 "2025-06-30"）
 
 
+class IndustryAllocRow(BaseModel):
+    """行业配置单行（原始事实，存放于外部 Store）。"""
+
+    industry: str | None = None
+    nav_ratio: float | None = None      # 占净值比例（%）
+    market_value: float | None = None   # 市值（万元）
+    report_date: str | None = None      # 截止时间（如 "2026-06-30"）
+
+
+class AssetAllocRow(BaseModel):
+    """资产配置单行（原始事实，存放于外部 Store）。"""
+
+    asset_type: str | None = None       # 股票 / 债券 / 现金 / 其他
+    percent: float | None = None        # 仓位占比（%）
+
+
+class FeeInfo(BaseModel):
+    """基金运作费用（原始事实，% / 年）。"""
+
+    management_fee_rate: float | None = None
+    custodian_fee_rate: float | None = None
+    service_fee_rate: float | None = None
+
+
+class AchievementRow(BaseModel):
+    """雪球业绩单行：区间收益 / 回撤 / 同类排名（原始事实）。"""
+
+    performance_type: str | None = None  # 年度业绩 / 阶段业绩
+    period: str | None = None
+    return_rate: float | None = None     # %
+    max_drawdown: float | None = None    # %
+    category_rank: str | None = None     # 如 "308/1070"
+
+
+class FundRating(BaseModel):
+    """第三方评级（天天基金评级总汇，原始事实）。"""
+
+    fund_code: str
+    five_star_count: int | None = None
+    rating_sh: float | None = None       # 上海证券
+    rating_zs: float | None = None       # 招商证券
+    rating_ja: float | None = None       # 济安金信
+    rating_mx: float | None = None       # 晨星
+
+
+class IndexPoint(BaseModel):
+    """基准指数单日收盘点（原始事实，存放于外部 Store）。"""
+
+    nav_date: date
+    close: float | None = None
+
+
+def resolve_benchmark_code(fund: "Fund") -> str | None:
+    """从业绩比较基准文本 / 基金类型解析可拉取的指数代码（东财源需市场前缀）。
+
+    启发式（V1，显式声明）：
+    - 基准文本含"中证500"→ sh000905、"沪深300"→ sh000300、"上证指数"→ sh000001、
+      "创业板"→ sz399006；
+    - 文本未命中时，增强指数型基金缺省其中证500；
+    - 其余返回 None（不计算超额收益，由报告注明）。
+    注意：混合型基准常为"股 + 债"复合，按股票部分近似，属已知简化。
+    """
+    text = fund.benchmark or ""
+    if "中证500" in text:
+        return "sh000905"
+    if "沪深300" in text:
+        return "sh000300"
+    if "上证指数" in text:
+        return "sh000001"
+    if "创业板" in text:
+        return "sz399006"
+    if fund.fund_type and "增强指数" in fund.fund_type:
+        return "sh000905"
+    return None
+
+
 class Fund(BaseModel):
     """基金完整信息（存放于外部 Store，State 不直接携带）。"""
 
@@ -151,6 +227,13 @@ def quality_of(*fields: object) -> DataQuality:
 __all__ = [
     "NAVPoint",
     "Holding",
+    "IndustryAllocRow",
+    "AssetAllocRow",
+    "FeeInfo",
+    "AchievementRow",
+    "FundRating",
+    "IndexPoint",
+    "resolve_benchmark_code",
     "Fund",
     "FundSummary",
     "FundPerformance",

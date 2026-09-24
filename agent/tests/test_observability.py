@@ -374,7 +374,7 @@ class TestTracerInGraph:
         ]
         by_node = {n.node: n for n in trace.nodes}
         assert by_node["collector"].output_summary["funds_collected"] == 1
-        assert by_node["collector"].output_summary["evidence"] == 3
+        assert by_node["collector"].output_summary["evidence"] == 9
         assert by_node["analyzer"].output_summary["analysis_present"] is True
         assert by_node["thesis"].output_summary["claims"] == 1
         assert by_node["evaluator"].output_summary["status"] == "pass"

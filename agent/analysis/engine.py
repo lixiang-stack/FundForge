@@ -8,25 +8,51 @@
 - 年化收益：(1 + cumulative) ** (365 / 区间自然日) - 1，区间不足 30 个自然日不年化；
 - 年化波动：日收益总体标准差（pstdev）* sqrt(252)；
 - 最大回撤：max(v_t / run_max - 1)，结果 ≤ 0（无回撤时为 0.0）；
-- 夏普（简化）：mean(r) / pstdev(r) * sqrt(252)，无风险利率取 0，波动为 0 时返回 None。
+- 夏普（简化）：mean(r) / pstdev(r) * sqrt(252)，无风险利率取 0，波动为 0 时返回 None；
+- Sortino（简化）：mean(r) / 下行偏差 * sqrt(252)，下行偏差 = sqrt(mean(min(r, 0)^2))
+  （分母为全样本的标准口径），无风险利率取 0，下行偏差为 0 时返回 None；
+- 分年度收益：自然年内首末有效净值点的累计收益，年内不足 2 个有效点的年份不列入；
+- 回撤修复期：最大回撤谷底到净值首次收复峰值的自然日数，截至期末未修复返回 None；
+- 滚动收益：滚动 252 个交易日窗口的累计收益分布（min/median/max），不足一个窗口返回 None。
 
 不满足计算条件（有效净值点不足）时返回 None，由调用方标记 data_quality。
 
-持仓对比维度（集中度 / 重叠度）同样为确定性纯函数：
+持仓分析维度（集中度 / 重叠度 / 市场分布）同样为确定性纯函数：
 - 集中度：最新报告期前十大持仓占净值比例合计（%）；
-- 重叠度：两基金最新报告期持仓（按股票名）的 Jaccard 重叠率。
+- 重叠度：两基金最新报告期持仓（按股票名）的 Jaccard 重叠率；
+- 市场分布：按股票代码形态分类（6 位数字=A股、5 位数字=港股、字母=美股等海外），
+  各类占净值比例合计（%）——代码形态为启发式，无法识别的归入 other。
 """
 
 import math
+import re
+import statistics
 
-from domain.analysis import FundConcentration, FundMetrics, HoldingsOverlap
-from domain.fund import Holding, NAVPoint, latest_report_period, top_holdings
+from domain.analysis import (
+    FundConcentration,
+    FundMetrics,
+    HoldingsOverlap,
+    MarketSplit,
+    RollingReturnSummary,
+)
+from domain.fund import (
+    Holding,
+    IndexPoint,
+    NAVPoint,
+    latest_report_period,
+    top_holdings,
+)
 from domain.shared import DataQuality
 
 TRADING_DAYS_PER_YEAR = 252
 DAYS_PER_YEAR = 365
 _MIN_DAYS_FOR_ANNUALIZATION = 30
 _MAX_COMMON_NAMES = 10
+_ROLLING_WINDOW_DAYS = 252
+
+_A_SHARE_RE = re.compile(r"^\d{6}$")
+_HK_SHARE_RE = re.compile(r"^\d{5}$")
+_OVERSEAS_RE = re.compile(r"^[A-Za-z][A-Za-z.\-]*$")
 
 
 def nav_value(point: NAVPoint, basis: str) -> float | None:
@@ -98,6 +124,147 @@ def sharpe_ratio(returns: list[float], risk_free_daily: float = 0.0) -> float | 
     return mu / math.sqrt(var) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
+def sortino_ratio(returns: list[float], risk_free_daily: float = 0.0) -> float | None:
+    """简化 Sortino = mean(r - rf) / 下行偏差 * sqrt(252)；下行偏差为 0 时返回 None。
+
+    下行偏差 = sqrt(mean(min(r - rf, 0)^2))，分母为全样本（标准 Sortino 口径），
+    只惩罚下行波动。
+    """
+    if len(returns) < 2:
+        return None
+    excess = [r - risk_free_daily for r in returns]
+    mu = sum(excess) / len(excess)
+    downside = math.sqrt(sum(min(e, 0.0) ** 2 for e in excess) / len(excess))
+    if downside == 0:
+        return None
+    return mu / downside * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+
+def yearly_returns(series: list[tuple]) -> dict[str, float | None]:
+    """分年度收益：自然年内首末有效净值点的累计收益。
+
+    series 为 (date, value) 序列；年内有效点不足 2 个的年份不列入（不编造）。
+    """
+    by_year: dict[int, list[float]] = {}
+    for d, v in series:
+        by_year.setdefault(d.year, []).append(v)
+    return {
+        str(year): cumulative_return(vals)
+        for year, vals in sorted(by_year.items())
+        if len(vals) >= 2
+    }
+
+
+def drawdown_recovery_days(series: list[tuple]) -> int | None:
+    """最大回撤修复期：谷底到净值首次收复谷底对应峰值的自然日数。
+
+    series 为 (date, value) 序列；全程无回撤返回 0，截至期末未修复返回 None。
+    """
+    if len(series) < 2:
+        return None
+    values = [v for _, v in series]
+    peak = values[0]
+    trough_idx: int | None = None
+    trough_ratio = 1.0
+    trough_peak = 0.0
+    for i, v in enumerate(values):
+        peak = max(peak, v)
+        if peak <= 0:
+            continue
+        ratio = v / peak
+        if ratio < trough_ratio:
+            trough_idx, trough_ratio, trough_peak = i, ratio, peak
+    if trough_idx is None:
+        return 0
+    for i in range(trough_idx + 1, len(values)):
+        if values[i] >= trough_peak:
+            return (series[i][0] - series[trough_idx][0]).days
+    return None
+
+
+def rolling_return_summary(
+    returns: list[float], window: int = _ROLLING_WINDOW_DAYS
+) -> RollingReturnSummary | None:
+    """滚动 window 个交易日窗口的累计收益分布；不足一个窗口返回 None。"""
+    if len(returns) < window:
+        return None
+    rolls = []
+    for i in range(len(returns) - window + 1):
+        cum = 1.0
+        for r in returns[i : i + window]:
+            cum *= 1.0 + r
+        rolls.append(cum - 1.0)
+    return RollingReturnSummary(
+        window_days=window,
+        min=min(rolls),
+        median=statistics.median(rolls),
+        max=max(rolls),
+    )
+
+
+def benchmark_comparison(
+    fund_points: list[NAVPoint],
+    basis: str,
+    index_points: list[IndexPoint],
+) -> tuple[float | None, float | None]:
+    """净值 vs 基准指数（按日期对齐）→ (超额累计收益, 近似跟踪误差年化)。
+
+    近似跟踪误差 = 对齐日收益差（基金日收益 − 指数日收益）的年化标准差，
+    替代无公开披露源的实测跟踪误差；对齐点不足 2 个返回 (None, None)。
+    """
+    bench = {p.nav_date: p.close for p in index_points if p.close is not None}
+    pairs = [
+        (p.nav_date, v)
+        for p in fund_points
+        if (v := nav_value(p, basis)) is not None and p.nav_date in bench
+    ]
+    if len(pairs) < 2:
+        return None, None
+    fund_navs = [v for _, v in pairs]
+    bench_navs = [bench[d] for d, _ in pairs]
+    fund_cum = cumulative_return(fund_navs)
+    bench_cum = cumulative_return(bench_navs)
+    excess = (
+        fund_cum - bench_cum
+        if fund_cum is not None and bench_cum is not None
+        else None
+    )
+    fund_rets = simple_returns(fund_navs)
+    bench_rets = simple_returns(bench_navs)
+    daily_excess = [f - b for f, b in zip(fund_rets, bench_rets)]
+    return excess, annualized_volatility(daily_excess)
+
+
+def _market_of(stock_code: str) -> str:
+    """按代码形态归类市场：6 位数字=A股、5 位数字=港股、字母=美股等海外。"""
+    code = stock_code.strip()
+    if _A_SHARE_RE.match(code):
+        return "a_share"
+    if _HK_SHARE_RE.match(code):
+        return "hk_share"
+    if _OVERSEAS_RE.match(code):
+        return "overseas"
+    return "other"
+
+
+def market_split(holdings: list[Holding]) -> MarketSplit | None:
+    """最新报告期披露持仓的市场分布（各类占净值比例合计 %）；无任何有效权重返回 None。"""
+    buckets: dict[str, list[float]] = {}
+    for h in _latest_period_rows(holdings):
+        if h.hold_ratio is None:
+            continue
+        buckets.setdefault(_market_of(h.stock_code), []).append(h.hold_ratio)
+    if not buckets:
+        return None
+    ratios = {key: sum(vals) for key, vals in buckets.items()}
+    return MarketSplit(
+        a_share_ratio=ratios.get("a_share"),
+        hk_share_ratio=ratios.get("hk_share"),
+        overseas_ratio=ratios.get("overseas"),
+        other_ratio=ratios.get("other"),
+    )
+
+
 def _quality_of(n_valid: int) -> DataQuality:
     """有效净值点数量 → 数据质量：0 missing / 1 partial / ≥2 complete。"""
     if n_valid == 0:
@@ -116,6 +283,7 @@ def compute_fund_metrics(points: list[NAVPoint], basis: str = "auto") -> FundMet
     valid = [(p, v) for p in points if (v := nav_value(p, chosen)) is not None]
     navs = [v for _, v in valid]
     returns = simple_returns(navs)
+    series = [(p.nav_date, v) for p, v in valid]
 
     period_start = valid[0][0].nav_date if valid else None
     period_end = valid[-1][0].nav_date if valid else None
@@ -129,7 +297,11 @@ def compute_fund_metrics(points: list[NAVPoint], basis: str = "auto") -> FundMet
         annualized_return=annualized_return(navs, days),
         annual_volatility=annualized_volatility(returns),
         max_drawdown=max_drawdown(navs),
+        max_drawdown_recovery_days=drawdown_recovery_days(series),
         sharpe=sharpe_ratio(returns),
+        sortino=sortino_ratio(returns),
+        yearly_returns=yearly_returns(series),
+        rolling_1y=rolling_return_summary(returns),
         nav_basis=chosen,
         data_quality=_quality_of(len(navs)),
     )
@@ -182,7 +354,13 @@ __all__ = [
     "annualized_volatility",
     "max_drawdown",
     "sharpe_ratio",
+    "sortino_ratio",
+    "yearly_returns",
+    "drawdown_recovery_days",
+    "rolling_return_summary",
     "compute_fund_metrics",
+    "benchmark_comparison",
     "fund_concentration",
     "holdings_overlap",
+    "market_split",
 ]

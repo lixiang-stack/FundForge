@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lixiang/fundforge/internal/domain/benchmark"
 	"github.com/lixiang/fundforge/internal/domain/marketdata"
 	"github.com/lixiang/fundforge/internal/domain/nav"
 	"github.com/lixiang/fundforge/internal/domain/shared"
@@ -46,6 +47,12 @@ type splitJSON struct {
 	SplitDate  *string  `json:"split_date"`
 	SplitType  *string  `json:"split_type"`
 	SplitRatio *float64 `json:"split_ratio"`
+}
+
+// GET /api/index/{code}/daily: collector 仅保留 trade_date 与 close 两列。
+type indexDailyJSON struct {
+	TradeDate string   `json:"trade_date"`
+	Close     *float64 `json:"close"`
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +159,35 @@ func convertSplits(raw []splitJSON) []marketdata.SplitRaw {
 		})
 	}
 	return items
+}
+
+// convertIndexDailies converts collector index daily rows to domain entities.
+// daily_return is computed from consecutive closes (in %), matching the
+// benchmark_index_daily.daily_return column semantics.
+func convertIndexDailies(raw []indexDailyJSON, indexCode string) []benchmark.BenchmarkDaily {
+	dailies := make([]benchmark.BenchmarkDaily, 0, len(raw))
+	now := time.Now()
+	var prevClose float64
+	for _, r := range raw {
+		t := parseDate(r.TradeDate)
+		if t.IsZero() || r.Close == nil {
+			continue
+		}
+		close := *r.Close
+		var dailyReturn float64
+		if prevClose > 0 {
+			dailyReturn = (close - prevClose) / prevClose * 100
+		}
+		dailies = append(dailies, benchmark.BenchmarkDaily{
+			IndexCode:   indexCode,
+			TradeDate:   t,
+			ClosePrice:  close,
+			DailyReturn: dailyReturn,
+			FetchedAt:   now,
+		})
+		prevClose = close
+	}
+	return dailies
 }
 
 // ---------------------------------------------------------------------------

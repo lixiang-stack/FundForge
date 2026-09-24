@@ -26,6 +26,7 @@ type DataSyncUseCase struct {
 	fundProvider  marketdata.FundProvider
 	corpProvider  marketdata.CorporateActionProvider
 	toolProvider  marketdata.TradeCalendarProvider
+	indexProvider marketdata.IndexProvider
 	logger        *zap.SugaredLogger
 	fetchInterval time.Duration
 }
@@ -39,6 +40,7 @@ func NewDataSyncUseCase(
 	fundProvider marketdata.FundProvider,
 	corpProvider marketdata.CorporateActionProvider,
 	toolProvider marketdata.TradeCalendarProvider,
+	indexProvider marketdata.IndexProvider,
 	logger *zap.SugaredLogger,
 	fetchInterval time.Duration,
 ) *DataSyncUseCase {
@@ -51,6 +53,7 @@ func NewDataSyncUseCase(
 		fundProvider:  fundProvider,
 		corpProvider:  corpProvider,
 		toolProvider:  toolProvider,
+		indexProvider: indexProvider,
 		logger:        logger,
 		fetchInterval: fetchInterval,
 	}
@@ -266,9 +269,39 @@ func (uc *DataSyncUseCase) DetectManagerChanges(ctx context.Context) error {
 
 // ---------- Benchmark Data ----------
 
-// SyncBenchmarkData is a placeholder for Phase 1 (benchmark data source TBD).
+// benchmarkLookbackYears 回溯年限：需覆盖 agent 侧最长 10 年对齐窗口。
+const benchmarkLookbackYears = 11
+
+// SyncBenchmarkData fetches daily closes for all registered benchmark indices
+// and upserts them into benchmark_index_daily. Single-index failures are logged
+// and skipped so one broken index does not block the rest.
 func (uc *DataSyncUseCase) SyncBenchmarkData(ctx context.Context) error {
-	uc.logger.Info("SyncBenchmarkData: not yet implemented in Phase 1")
+	indices, err := uc.benchmarkRepo.GetAllIndices(ctx)
+	if err != nil {
+		return fmt.Errorf("SyncBenchmarkData: list indices: %w", err)
+	}
+	if len(indices) == 0 {
+		uc.logger.Warnw("SyncBenchmarkData: no benchmark indices registered")
+		return nil
+	}
+
+	now := time.Now()
+	start := now.AddDate(-benchmarkLookbackYears, 0, 0)
+	for _, idx := range indices {
+		dailies, err := uc.indexProvider.FetchIndexDaily(ctx, idx.IndexCode, start, now)
+		if err != nil {
+			uc.logger.Warnw("SyncBenchmarkData: fetch failed, skipping index",
+				"index", idx.IndexCode, "error", err)
+			continue
+		}
+		if err := uc.benchmarkRepo.BatchSaveDailyData(ctx, dailies); err != nil {
+			uc.logger.Warnw("SyncBenchmarkData: save failed, skipping index",
+				"index", idx.IndexCode, "error", err)
+			continue
+		}
+		uc.logger.Infow("benchmark data synced",
+			"index", idx.IndexCode, "name", idx.IndexName, "rows", len(dailies))
+	}
 	return nil
 }
 

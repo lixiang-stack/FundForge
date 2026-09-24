@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/lixiang/fundforge/internal/domain/benchmark"
 	"github.com/lixiang/fundforge/internal/domain/marketdata"
 	"github.com/lixiang/fundforge/internal/domain/nav"
 	"github.com/lixiang/fundforge/internal/infra/circuitbreaker"
@@ -140,6 +141,22 @@ func (c *Client) FetchSplits(ctx context.Context) ([]marketdata.SplitRaw, error)
 	return convertSplits(raw), nil
 }
 
+func (c *Client) FetchIndexDaily(ctx context.Context, indexCode string, start, end time.Time) ([]benchmark.BenchmarkDaily, error) {
+	symbol := benchmark.Symbol(indexCode)
+	path := fmt.Sprintf("/api/index/%s/daily?start_date=%s&end_date=%s",
+		url.PathEscape(symbol), start.Format("20060102"), end.Format("20060102"))
+	body, err := c.doGet(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("FetchIndexDaily(%s): %w", indexCode, err)
+	}
+	var raw []indexDailyJSON
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("FetchIndexDaily(%s): unmarshal: %w", indexCode, err)
+	}
+	return convertIndexDailies(raw, indexCode), nil
+}
+
 var _ marketdata.FundProvider = (*Client)(nil)
 var _ marketdata.TradeCalendarProvider = (*Client)(nil)
 var _ marketdata.CorporateActionProvider = (*Client)(nil)
+var _ marketdata.IndexProvider = (*Client)(nil)

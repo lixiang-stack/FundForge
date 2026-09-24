@@ -11,12 +11,16 @@
 """
 
 from collections.abc import Callable
+from datetime import datetime
 
 import httpx
 
 from tools.collector_client import CollectorClient
 
 FUND_CODES = ["519770", "004814", "015453"]
+
+# akshare 持仓的季度原文格式；用当前年避免触发时效披露（与 tests/conftest 一致）
+_QUARTER = f"{datetime.now().year}年2季度股票投资明细"
 
 DETAIL_ROWS = [
     {"item": "fund_code", "value": "519770"},
@@ -26,6 +30,7 @@ DETAIL_ROWS = [
     {"item": "fund_manager", "value": "周珊珊 高扬"},
     {"item": "fund_type", "value": "混合型-灵活配置"},
     {"item": "fund_company", "value": "交银施罗德基金公司"},
+    {"item": "benchmark", "value": "50%×沪深300指数收益率+50%×中债综合全价指数收益率"},
 ]
 
 UNIT_ROWS = [
@@ -41,8 +46,46 @@ ACC_ROWS = [
 ]
 
 HOLDINGS_ROWS = [
-    {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 3.12, "report_date": "2025-06-30"},
-    {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": "2025-06-30"},
+    {"stock_code": "600519", "stock_name": "贵州茅台", "hold_ratio": 3.12, "report_date": _QUARTER},
+    {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": _QUARTER},
+]
+
+INDUSTRY_ROWS = [
+    {"row_no": 1, "industry": "制造业", "nav_ratio": 68.96, "market_value": 189389.25, "report_date": "2026-06-30"},
+    {"row_no": 2, "industry": "金融业", "nav_ratio": 6.78, "market_value": 18620.89, "report_date": "2026-06-30"},
+]
+
+ALLOCATION_ROWS = [
+    {"asset_type": "股票", "percent": 94.18},
+    {"asset_type": "债券", "percent": 1.82},
+    {"asset_type": "现金", "percent": 5.46},
+]
+
+FEES_ROWS = [
+    {"management_fee_rate": 1.0, "custodian_fee_rate": 0.15, "service_fee_rate": 0.0}
+]
+
+ACHIEVEMENT_ROWS = [
+    {"performance_type": "年度业绩", "period": "成立以来", "return_rate": 53.44, "max_drawdown": 27.6, "category_rank": "308/1070"},
+    {"performance_type": "年度业绩", "period": "今年以来", "return_rate": 9.38, "max_drawdown": 16.45, "category_rank": "262/1070"},
+]
+
+RATING_ROWS = [
+    {
+        "fund_code": "519770",
+        "fund_name": "交银优择回报A",
+        "five_star_count": 2,
+        "rating_sh": 4.0,
+        "rating_zs": 5.0,
+        "rating_ja": 4.0,
+        "rating_mx": 5.0,
+    }
+]
+
+INDEX_ROWS = [
+    {"trade_date": "2016-04-22", "close": 100.0},
+    {"trade_date": "2020-01-02", "close": 120.0},
+    {"trade_date": "2026-09-08", "close": 150.0},
 ]
 
 FUND_LIST_ROWS = [
@@ -59,6 +102,12 @@ def _transport(
     unit_rows: list | None = None,
     acc_rows: list | None = None,
     holdings_rows: list | None = None,
+    industry_rows: list | None = None,
+    allocation_rows: list | None = None,
+    fees_rows: list | None = None,
+    achievement_rows: list | None = None,
+    rating_rows: list | None = None,
+    index_rows: list | None = None,
 ) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if status != 200:
@@ -75,6 +124,18 @@ def _transport(
             return httpx.Response(200, json=rows)
         if path.endswith("/holdings/stock"):
             return httpx.Response(200, json=HOLDINGS_ROWS if holdings_rows is None else holdings_rows)
+        if path.endswith("/industry"):
+            return httpx.Response(200, json=INDUSTRY_ROWS if industry_rows is None else industry_rows)
+        if path.endswith("/allocation"):
+            return httpx.Response(200, json=ALLOCATION_ROWS if allocation_rows is None else allocation_rows)
+        if path.endswith("/fees"):
+            return httpx.Response(200, json=FEES_ROWS if fees_rows is None else fees_rows)
+        if path.endswith("/achievement"):
+            return httpx.Response(200, json=ACHIEVEMENT_ROWS if achievement_rows is None else achievement_rows)
+        if path.endswith("/rating"):
+            return httpx.Response(200, json=RATING_ROWS if rating_rows is None else rating_rows)
+        if "/api/index/" in path and path.endswith("/daily"):
+            return httpx.Response(200, json=INDEX_ROWS if index_rows is None else index_rows)
         if path == "/api/funds":
             return httpx.Response(200, json=FUND_LIST_ROWS)
         return httpx.Response(404, json={"detail": "not found"})

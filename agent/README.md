@@ -15,6 +15,7 @@ FundForge 的 AI 研究工作流：接收自然语言问题（单基金分析 / 
 | [`docs/ConceptDesign.md`](docs/ConceptDesign.md) | 概念设计 |
 | [`docs/Plan.md`](docs/Plan.md) | Agent 分阶段实施计划（Phase 0-9） |
 | [`docs/TechnicalContract.md`](docs/TechnicalContract.md) | Agent 技术合同（State / Node / Evidence / Evaluation / Observability 等 §1-18） |
+| [`docs/fund-analysis-data-gap-closure.md`](docs/fund-analysis-data-gap-closure.md) | 数据缺口补齐方案（Sortino/分年度/超额收益/行业与资产配置/费率/评级/市场分布） |
 
 ---
 
@@ -30,8 +31,8 @@ router → planner → collector → analyzer → researcher → thesis → eval
 | ---- | ---- |
 | `router` | 意图识别与任务分类（单基金 / 对比等），规则优先、LLM 兜底 |
 | `planner` | 生成研究计划（主基金 + 同类基金、研究重点） |
-| `collector` | 通过 collector API 采集基金数据，产出 Evidence 与 Tool 调用记录 |
-| `analyzer` | 确定性量化分析引擎（收益 / 风险指标 / 同类对比），不依赖 LLM |
+| `collector` | 通过 collector API 采集基金数据（基本信息/净值/持仓/行业配置/资产配置/费率/同类排名/评级/基准指数），产出 Evidence 与 Tool 调用记录 |
+| `analyzer` | 确定性量化分析引擎（收益 / 风险指标 / Sortino / 分年度 / 滚动收益 / 回撤修复期 / 超额收益 / 持仓集中度 / 市场分布 / 同类重叠），不依赖 LLM |
 | `researcher` | 补充研究项 |
 | `thesis` | LLM 生成投资论点，**Evidence-Claim 强制绑定**（无证据的结论降级为数据缺口） |
 | `evaluator` | 结构化评估（事实 / 证据 / 缺项 / 风险），产出评分与修复决策 |

@@ -22,6 +22,12 @@ FUND_LIST_PATH = "/api/funds"
 FUND_DETAIL_PATH = "/api/funds/{code}/detail"
 FUND_NAV_PATH = "/api/funds/{code}/nav"
 FUND_HOLDINGS_PATH = "/api/funds/{code}/holdings/stock"
+FUND_INDUSTRY_PATH = "/api/funds/{code}/industry"
+FUND_ALLOCATION_PATH = "/api/funds/{code}/allocation"
+FUND_FEES_PATH = "/api/funds/{code}/fees"
+FUND_ACHIEVEMENT_PATH = "/api/funds/{code}/achievement"
+FUND_RATING_PATH = "/api/funds/{code}/rating"
+INDEX_DAILY_PATH = "/api/index/{code}/daily"
 
 
 def collector_source(path: str) -> str:
@@ -77,6 +83,47 @@ class CollectorClient:
     def get_fund_holdings(self, code: str, year: str | None = None) -> list[dict[str, Any]]:
         params = {"date": year} if year else None
         return self._get(FUND_HOLDINGS_PATH.format(code=code), params=params)
+
+    # ---- Industry Allocation ----
+
+    def get_fund_industry(self, code: str, year: str | None = None) -> list[dict[str, Any]]:
+        params = {"date": year} if year else None
+        return self._get(FUND_INDUSTRY_PATH.format(code=code), params=params)
+
+    # ---- Asset Allocation（雪球源，date 为财报日期 YYYYMMDD） ----
+
+    def get_fund_allocation(self, code: str, date: str) -> list[dict[str, Any]]:
+        return self._get(FUND_ALLOCATION_PATH.format(code=code), params={"date": date})
+
+    # ---- Operating Fees ----
+
+    def get_fund_fees(self, code: str) -> list[dict[str, Any]]:
+        return self._get(FUND_FEES_PATH.format(code=code))
+
+    # ---- Achievement（雪球源：年度/阶段业绩与同类排名） ----
+
+    def get_fund_achievement(self, code: str) -> list[dict[str, Any]]:
+        return self._get(FUND_ACHIEVEMENT_PATH.format(code=code))
+
+    # ---- Rating（天天基金评级总汇） ----
+
+    def get_fund_rating(self, code: str) -> list[dict[str, Any]]:
+        return self._get(FUND_RATING_PATH.format(code=code))
+
+    # ---- Index Daily（基准指数日线，code 需带市场前缀如 sh000905） ----
+
+    def get_index_daily(
+        self,
+        code: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self._get(INDEX_DAILY_PATH.format(code=code), params=params or None)
 
     # ---- Fund List（全量，进程内缓存，用于 search_funds） ----
 

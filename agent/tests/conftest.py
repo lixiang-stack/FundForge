@@ -42,6 +42,44 @@ HOLDINGS_ROWS = [
     {"stock_code": "300750", "stock_name": "宁德时代", "hold_ratio": 2.85, "report_date": _QUARTER},
 ]
 
+INDUSTRY_ROWS = [
+    {"row_no": 1, "industry": "制造业", "nav_ratio": 68.96, "market_value": 189389.25, "report_date": "2026-06-30"},
+    {"row_no": 2, "industry": "金融业", "nav_ratio": 6.78, "market_value": 18620.89, "report_date": "2026-06-30"},
+]
+
+ALLOCATION_ROWS = [
+    {"asset_type": "股票", "percent": 94.18},
+    {"asset_type": "债券", "percent": 1.82},
+    {"asset_type": "现金", "percent": 5.46},
+]
+
+FEES_ROWS = [
+    {"management_fee_rate": 1.0, "custodian_fee_rate": 0.15, "service_fee_rate": 0.0}
+]
+
+ACHIEVEMENT_ROWS = [
+    {"performance_type": "年度业绩", "period": "成立以来", "return_rate": 53.44, "max_drawdown": 27.6, "category_rank": "308/1070"},
+    {"performance_type": "年度业绩", "period": "今年以来", "return_rate": 9.38, "max_drawdown": 16.45, "category_rank": "262/1070"},
+]
+
+RATING_ROWS = [
+    {
+        "fund_code": FUND_CODE,
+        "fund_name": "交银优择回报A",
+        "five_star_count": 2,
+        "rating_sh": 4.0,
+        "rating_zs": 5.0,
+        "rating_ja": 4.0,
+        "rating_mx": 5.0,
+    }
+]
+
+INDEX_ROWS = [
+    {"trade_date": "2016-04-22", "close": 100.0},
+    {"trade_date": "2020-01-02", "close": 120.0},
+    {"trade_date": "2026-09-08", "close": 150.0},
+]
+
 ACC_ROWS = [
     {"nav_date": "2016-04-22", "acc_nav": 1.0},
     {"nav_date": "2020-01-02", "acc_nav": 2.1},
@@ -70,6 +108,12 @@ def make_transport(
     acc_rows: list | None = None,
     fund_rows: list | None = None,
     holdings_rows: list | None = None,
+    industry_rows: list | None = None,
+    allocation_rows: list | None = None,
+    fees_rows: list | None = None,
+    achievement_rows: list | None = None,
+    rating_rows: list | None = None,
+    index_rows: list | None = None,
     status: int = 200,
 ) -> httpx.MockTransport:
     """按路径模拟 collector 响应；status 非 200 时统一返回错误。"""
@@ -89,6 +133,24 @@ def make_transport(
             return httpx.Response(
                 200, json=holdings_rows if holdings_rows is not None else HOLDINGS_ROWS
             )
+        if path.endswith("/industry"):
+            return httpx.Response(
+                200, json=industry_rows if industry_rows is not None else INDUSTRY_ROWS
+            )
+        if path.endswith("/allocation"):
+            return httpx.Response(
+                200, json=allocation_rows if allocation_rows is not None else ALLOCATION_ROWS
+            )
+        if path.endswith("/fees"):
+            return httpx.Response(200, json=fees_rows if fees_rows is not None else FEES_ROWS)
+        if path.endswith("/achievement"):
+            return httpx.Response(
+                200, json=achievement_rows if achievement_rows is not None else ACHIEVEMENT_ROWS
+            )
+        if path.endswith("/rating"):
+            return httpx.Response(200, json=rating_rows if rating_rows is not None else RATING_ROWS)
+        if "/api/index/" in path and path.endswith("/daily"):
+            return httpx.Response(200, json=INDEX_ROWS if index_rows is not None else INDEX_ROWS)
         if path == "/api/funds":
             return httpx.Response(200, json=fund_rows if fund_rows is not None else FUND_LIST_ROWS)
         return httpx.Response(404, json={"detail": "not found"})
@@ -102,12 +164,31 @@ def make_tools(
     acc_rows: list | None = None,
     fund_rows: list | None = None,
     holdings_rows: list | None = None,
+    industry_rows: list | None = None,
+    allocation_rows: list | None = None,
+    fees_rows: list | None = None,
+    achievement_rows: list | None = None,
+    rating_rows: list | None = None,
+    index_rows: list | None = None,
     status: int = 200,
 ):
     """构建 (tools, store, client) 三元组，client 使用 mock transport。"""
     client = CollectorClient(
         base_url="http://collector.test",
-        transport=make_transport(detail_rows, unit_rows, acc_rows, fund_rows, holdings_rows, status),
+        transport=make_transport(
+            detail_rows,
+            unit_rows,
+            acc_rows,
+            fund_rows,
+            holdings_rows,
+            industry_rows,
+            allocation_rows,
+            fees_rows,
+            achievement_rows,
+            rating_rows,
+            index_rows,
+            status,
+        ),
     )
     store = FundStore()
     return make_fund_tools(client, store), store, client

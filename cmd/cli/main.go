@@ -175,6 +175,12 @@ func syncCmd() *cobra.Command {
 			return app.dataSyncUC.DetectManagerChanges(context.Background())
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use: "benchmark", Short: "Sync benchmark index daily data",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return app.dataSyncUC.SyncBenchmarkData(context.Background())
+		},
+	})
 
 	return cmd
 }
@@ -394,7 +400,7 @@ func initApp() error {
 	app.fundUC = application.NewFundUseCase(fundRepo, navRepo, provider, log)
 	app.dataSyncUC = application.NewDataSyncUseCase(
 		fundRepo, fundRepo, navRepo, calendarRepo, benchmarkRepo,
-		provider, provider, provider, log,
+		provider, provider, provider, provider, log,
 		time.Duration(app.cfg.FetchIntervalMs)*time.Millisecond,
 	)
 	app.analysisUC = application.NewAnalysisUseCase(

@@ -12,10 +12,17 @@ from itertools import combinations
 from typing import TypedDict
 from datetime import datetime, timedelta
 
-from analysis import compute_fund_metrics, fund_concentration, holdings_overlap
+from analysis import (
+    benchmark_comparison,
+    compute_fund_metrics,
+    fund_concentration,
+    holdings_overlap,
+    market_split,
+)
 from domain.analysis import (
     AnalysisResult,
     FundConcentration,
+    FundHoldingsMetrics,
     FundMetrics,
     HoldingsOverlap,
     PeerComparison,
@@ -24,7 +31,7 @@ from domain.analysis import (
     RiskAnalysis,
 )
 from domain.evidence import Evidence, EvidenceType
-from domain.fund import Holding
+from domain.fund import Holding, resolve_benchmark_code
 from domain.plan import ResearchPlan
 from domain.shared import DataQuality
 from domain.task_type import TaskType
@@ -130,16 +137,40 @@ class AnalyzerNode:
                     f"（{detail}），各基金逐日覆盖不一致，指标横向对比需谨慎"
                 )
 
-        # 持仓对比维度仅限对比任务（research-with-peers 不计算，保持既有 Evidence 计数）
+        # 超额收益/跟踪误差：按各基金解析出的基准指数计算（无法解析或无指数数据则留空）
+        excess_by_fund: dict[str, tuple[float | None, float | None]] = {}
+        benchmark_codes: dict[str, str | None] = {}
+        for fid in fund_ids:
+            fund = self._store.get_fund(fid)
+            code = resolve_benchmark_code(fund) if fund else None
+            benchmark_codes[fid] = code
+            index_points = self._store.get_index_series(code) if code else []
+            if code and index_points:
+                excess_by_fund[fid] = benchmark_comparison(
+                    _window_points(fid), metrics_by_fund[fid].nav_basis, index_points
+                )
+
+        # 持仓分析：集中度与市场分布对所有任务计算（研究报告同样呈现）；
+        # 重叠度仅多基金场景（对比价值所在），PeerComparison.concentration 仅对比任务填充
         task_type = plan.task_type if plan else state.get("task_type")
-        holdings_comparison = task_type == TaskType.FUND_COMPARISON and len(fund_ids) > 1
-        concentration: list[FundConcentration] = []
+        holdings_by_fund: dict[str, list[Holding]] = {
+            fid: self._store.get_holdings(fid) for fid in fund_ids
+        }
+        concentration_all = [fund_concentration(holdings_by_fund[fid], fid) for fid in fund_ids]
+        splits = {fid: market_split(holdings_by_fund[fid]) for fid in fund_ids}
+        holdings_metrics = [
+            FundHoldingsMetrics(
+                fund_id=fid,
+                top10_sum=c.top10_sum,
+                holding_count=c.holding_count,
+                market_split=splits[fid],
+            )
+            for fid, c in zip(fund_ids, concentration_all)
+        ]
+        is_comparison = task_type == TaskType.FUND_COMPARISON and len(fund_ids) > 1
+        concentration = concentration_all if is_comparison else []
         overlaps: list[HoldingsOverlap] = []
-        if holdings_comparison:
-            holdings_by_fund: dict[str, list[Holding]] = {
-                fid: self._store.get_holdings(fid) for fid in fund_ids
-            }
-            concentration = [fund_concentration(holdings_by_fund[fid], fid) for fid in fund_ids]
+        if is_comparison:
             overlaps = [
                 holdings_overlap(holdings_by_fund[a], holdings_by_fund[b], a, b)
                 for a, b in combinations(fund_ids, 2)
@@ -148,10 +179,18 @@ class AnalyzerNode:
                 issues.append("多基金对比：持仓数据缺失，未计算持仓集中度与重叠度")
 
         analysis = self._build_analysis(
-            primary_id, fund_ids, metrics_by_fund, concentration, overlaps
+            primary_id,
+            fund_ids,
+            metrics_by_fund,
+            concentration,
+            overlaps,
+            holdings_metrics,
+            excess_by_fund,
+            benchmark_codes,
         )
         evidence = self._build_evidence(
-            fund_ids, metrics_by_fund, alignment, concentration, overlaps
+            fund_ids, metrics_by_fund, alignment, holdings_metrics, overlaps,
+            excess_by_fund, benchmark_codes,
         )
         issues += [
             f"{fid}: 净值数据不足（{m.nav_point_count} 个有效点），指标不可信"
@@ -179,8 +218,14 @@ class AnalyzerNode:
         metrics_by_fund: dict[str, FundMetrics],
         concentration: list[FundConcentration] | None = None,
         overlaps: list[HoldingsOverlap] | None = None,
+        holdings_metrics: list[FundHoldingsMetrics] | None = None,
+        excess_by_fund: dict[str, tuple[float | None, float | None]] | None = None,
+        benchmark_codes: dict[str, str | None] | None = None,
     ) -> AnalysisResult:
+        excess_by_fund = excess_by_fund or {}
+        benchmark_codes = benchmark_codes or {}
         primary = metrics_by_fund[primary_id]
+        primary_excess, primary_te = excess_by_fund.get(primary_id, (None, None))
         performance = PerformanceAnalysis(
             fund_id=primary_id,
             period_start=primary.period_start,
@@ -188,13 +233,20 @@ class AnalyzerNode:
             nav_point_count=primary.nav_point_count,
             cumulative_return=primary.cumulative_return,
             annualized_return=primary.annualized_return,
+            yearly_returns=primary.yearly_returns,
+            rolling_1y=primary.rolling_1y,
+            benchmark_code=benchmark_codes.get(primary_id),
+            excess_return=primary_excess,
+            tracking_error=primary_te,
             data_quality=primary.data_quality,
         )
         risk = RiskAnalysis(
             fund_id=primary_id,
             annual_volatility=primary.annual_volatility,
             max_drawdown=primary.max_drawdown,
+            max_drawdown_recovery_days=primary.max_drawdown_recovery_days,
             sharpe=primary.sharpe,
+            sortino=primary.sortino,
             data_quality=primary.data_quality,
         )
         peer_comparison = None
@@ -212,6 +264,10 @@ class AnalyzerNode:
                         annual_volatility=m.annual_volatility,
                         max_drawdown=m.max_drawdown,
                         sharpe=m.sharpe,
+                        sortino=m.sortino,
+                        benchmark_code=benchmark_codes.get(fid),
+                        excess_return=(excess_by_fund.get(fid, (None, None)))[0],
+                        tracking_error=(excess_by_fund.get(fid, (None, None)))[1],
                         nav_basis=m.nav_basis,
                     )
                     for fid, m in metrics_by_fund.items()
@@ -219,20 +275,30 @@ class AnalyzerNode:
                 concentration=concentration or [],
                 overlaps=overlaps or [],
             )
-        return AnalysisResult(performance=performance, risk=risk, peer_comparison=peer_comparison)
+        return AnalysisResult(
+            performance=performance,
+            risk=risk,
+            peer_comparison=peer_comparison,
+            holdings_metrics=holdings_metrics or [],
+        )
 
     def _build_evidence(
         self,
         fund_ids: list[str],
         metrics_by_fund: dict[str, FundMetrics],
         alignment: tuple | None = None,
-        concentration: list[FundConcentration] | None = None,
+        holdings_metrics: list[FundHoldingsMetrics] | None = None,
         overlaps: list[HoldingsOverlap] | None = None,
+        excess_by_fund: dict[str, tuple[float | None, float | None]] | None = None,
+        benchmark_codes: dict[str, str | None] | None = None,
     ) -> list[Evidence]:
-        """每只基金一条指标 calculation Evidence + 持仓对比计算 Evidence（§9）。"""
+        """每只基金一条指标 calculation Evidence + 持仓分析 Evidence + 重叠度 Evidence（§9）。"""
+        excess_by_fund = excess_by_fund or {}
+        benchmark_codes = benchmark_codes or {}
         evidences = []
         for fid in fund_ids:
             m = metrics_by_fund[fid]
+            fid_excess, fid_te = excess_by_fund.get(fid, (None, None))
             evidences.append(
                 Evidence(
                     id=f"ev-{uuid.uuid4().hex[:12]}",
@@ -249,7 +315,14 @@ class AnalyzerNode:
                         "annualized_return": m.annualized_return,
                         "annual_volatility": m.annual_volatility,
                         "max_drawdown": m.max_drawdown,
+                        "max_drawdown_recovery_days": m.max_drawdown_recovery_days,
                         "sharpe": m.sharpe,
+                        "sortino": m.sortino,
+                        "yearly_returns": m.yearly_returns,
+                        "rolling_1y": m.rolling_1y.model_dump() if m.rolling_1y else None,
+                        "benchmark_code": benchmark_codes.get(fid),
+                        "excess_return": fid_excess,
+                        "tracking_error": fid_te,
                         "nav_basis": m.nav_basis,
                         "alignment_window": [str(alignment[0]), str(alignment[1])] if alignment else None,
                     },
@@ -257,24 +330,25 @@ class AnalyzerNode:
                     raw_ref=FundStore.nav_ref(fid),
                 )
             )
-        for c in concentration or []:
-            if c.top10_sum is None:
+        for h in holdings_metrics or []:
+            if h.top10_sum is None and h.market_split is None:
                 continue
             evidences.append(
                 Evidence(
                     id=f"ev-{uuid.uuid4().hex[:12]}",
                     evidence_type=EvidenceType.CALCULATION,
                     source=_ANALYSIS_SOURCE,
-                    source_detail="确定性持仓对比计算（Analysis Engine，无 LLM）",
+                    source_detail="确定性持仓分析计算（Analysis Engine，无 LLM）",
                     as_of=datetime.now(),
                     value={
-                        "metric": "top10_concentration",
-                        "fund_id": c.fund_id,
-                        "top10_sum": c.top10_sum,
-                        "holding_count": c.holding_count,
+                        "metric": "holdings_metrics",
+                        "fund_id": h.fund_id,
+                        "top10_sum": h.top10_sum,
+                        "holding_count": h.holding_count,
+                        "market_split": h.market_split.model_dump() if h.market_split else None,
                     },
                     data_quality=DataQuality.COMPLETE,
-                    raw_ref=FundStore.holdings_ref(c.fund_id),
+                    raw_ref=FundStore.holdings_ref(h.fund_id),
                 )
             )
         for o in overlaps or []:

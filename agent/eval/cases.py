@@ -47,7 +47,7 @@ CASES: list[EvalCase] = [
         checks=[
             CheckSpec(name="fund_ids", params={"ids": ["519770", "004814", "015453"]}),
             CheckSpec(name="fund_count", params={"count": 3}),
-            CheckSpec(name="evidence_count", params={"count": 12}),
+            CheckSpec(name="evidence_count", params={"count": 31}),
             CheckSpec(name="min_claims", params={"min": 1}),
             CheckSpec(name="all_claims_have_evidence"),
             CheckSpec(name="claim_coverage_min", params={"min": 0.5}),
@@ -173,7 +173,7 @@ CASES: list[EvalCase] = [
             CheckSpec(name="has_suitability"),
             CheckSpec(name="thesis_present", params={"expected": True}),
             CheckSpec(name="all_claims_have_evidence"),
-            CheckSpec(name="evidence_count", params={"count": 4}),
+            CheckSpec(name="evidence_count", params={"count": 9}),
             CheckSpec(name="has_disclaimer"),
             CheckSpec(name="evaluation_status_in", params={"statuses": ["pass"]}),
         ],

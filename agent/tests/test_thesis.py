@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from domain.thesis import Claim, InvestmentThesis
 from domain.report import render_markdown
 from limits import (
+    LLM_MAX_TOKENS,
     THESIS_MAX_CLAIMS,
     THESIS_MAX_ITEM_CHARS,
     THESIS_MAX_LIST_ITEMS,
@@ -155,7 +156,7 @@ class TestThesisNode:
         # 截断场景：部分原始输出与实际用量须进 llm_interactions（运行记录诊断用）
         provider = FakeLLMProvider(
             LLMError(
-                "llm output truncated: finish_reason=length, max_tokens=4000",
+                f"llm output truncated: finish_reason=length, max_tokens={LLM_MAX_TOKENS}",
                 content='{"summary": "截断的部分输出',
                 input_tokens=4500,
                 output_tokens=4000,
