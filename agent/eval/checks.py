@@ -255,17 +255,50 @@ def comparative_claim_present(state: dict, case: EvalCase, params: dict[str, Any
     return "没有任何 claim 绑定跨基金证据（未形成跨基金对比结论）"
 
 
-def performance_sections_symmetric(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
-    """对比报告：业绩与风险章节必须逐基金覆盖（防单基金模板硬套对比）。"""
+def comparison_table_covers_funds(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告：核心指标对比表必须覆盖全部期望基金（防单基金模板硬套对比）。"""
     report = _report(state)
     if report is None:
         return "report 缺失"
     expected = list(params.get("ids", case.fund_ids))
-    for field, label in (("performance_analysis", "业绩分析"), ("risk_analysis", "风险分析")):
-        text = getattr(report, field) or ""
-        missing = [fid for fid in expected if fid not in text]
-        if missing:
-            return f"{label}章节未覆盖基金：{missing}"
+    text = report.peer_comparison or ""
+    missing = [fid for fid in expected if fid not in text]
+    if missing:
+        return f"核心指标对比表未覆盖基金：{missing}"
+    return None
+
+
+def comparison_differences_present(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告可读性：必须有差异总结（逐维度给出更优/较弱与差距）。"""
+    report = _report(state)
+    if report is None:
+        return "report 缺失"
+    if not (report.comparison_differences or "").strip():
+        return "对比报告缺少差异总结（comparison_differences）"
+    return None
+
+
+def recommendation_present(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告必须有明确推荐倾向，且至少指向一只 case 基金（防空洞文本）。"""
+    report = _report(state)
+    if report is None:
+        return "report 缺失"
+    text = report.recommendation or ""
+    if not text.strip():
+        return "对比报告缺少推荐倾向（recommendation）"
+    expected = list(params.get("ids", case.fund_ids))
+    if expected and not any(fid in text for fid in expected):
+        return f"推荐倾向未提及任何预期基金：{expected}"
+    return None
+
+
+def comparison_tables_present(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """对比报告可读性：核心指标对比必须表格化（防退回逐基金平铺描述）。"""
+    report = _report(state)
+    if report is None:
+        return "report 缺失"
+    if "| ---" not in (report.peer_comparison or ""):
+        return "核心指标对比章节未渲染为 Markdown 表格"
     return None
 
 
@@ -283,7 +316,10 @@ REGISTRY: dict[str, Callable[[dict, EvalCase, dict[str, Any]], str | None]] = {
     "peer_mentioned_in_report": peer_mentioned_in_report,
     "comparison_title_covers_funds": comparison_title_covers_funds,
     "comparative_claim_present": comparative_claim_present,
-    "performance_sections_symmetric": performance_sections_symmetric,
+    "comparison_table_covers_funds": comparison_table_covers_funds,
+    "comparison_differences_present": comparison_differences_present,
+    "recommendation_present": recommendation_present,
+    "comparison_tables_present": comparison_tables_present,
     "fund_count": fund_count,
     "evidence_count": evidence_count,
     "thesis_present": thesis_present,

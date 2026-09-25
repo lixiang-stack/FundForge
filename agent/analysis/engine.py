@@ -13,7 +13,9 @@
   （分母为全样本的标准口径），无风险利率取 0，下行偏差为 0 时返回 None；
 - 分年度收益：自然年内首末有效净值点的累计收益，年内不足 2 个有效点的年份不列入；
 - 回撤修复期：最大回撤谷底到净值首次收复峰值的自然日数，截至期末未修复返回 None；
-- 滚动收益：滚动 252 个交易日窗口的累计收益分布（min/median/max），不足一个窗口返回 None。
+- 滚动收益：滚动 252 个交易日窗口的累计收益分布（min/median/max），不足一个窗口返回 None；
+- 区间（尾部）收益：最近 21/63/126/252 个交易日的累计收益，近似 近1月/近3月/近6月/近1年，
+  有效收益不足窗口长度的为 None（不编造）。
 
 不满足计算条件（有效净值点不足）时返回 None，由调用方标记 data_quality。
 
@@ -202,6 +204,34 @@ def rolling_return_summary(
     )
 
 
+# (标签, 窗口交易日数)：21/63/126/252 ≈ 1/3/6/12 个月
+TRAILING_WINDOWS: tuple[tuple[str, int], ...] = (
+    ("1m", 21),
+    ("3m", 63),
+    ("6m", 126),
+    ("1y", 252),
+)
+
+
+def trailing_returns(
+    returns: list[float], windows: tuple[tuple[str, int], ...] = TRAILING_WINDOWS
+) -> dict[str, float | None]:
+    """区间（尾部）收益：最近 k 个交易日累计收益（21/63/126/252 ≈ 1/3/6/12 个月）。
+
+    有效收益不足 k 个的窗口为 None（不编造），标签与 TRAILING_WINDOWS 一致。
+    """
+    out: dict[str, float | None] = {}
+    for label, k in windows:
+        if len(returns) < k:
+            out[label] = None
+            continue
+        cum = 1.0
+        for r in returns[-k:]:
+            cum *= 1.0 + r
+        out[label] = cum - 1.0
+    return out
+
+
 def benchmark_comparison(
     fund_points: list[NAVPoint],
     basis: str,
@@ -302,6 +332,7 @@ def compute_fund_metrics(points: list[NAVPoint], basis: str = "auto") -> FundMet
         sortino=sortino_ratio(returns),
         yearly_returns=yearly_returns(series),
         rolling_1y=rolling_return_summary(returns),
+        trailing_returns=trailing_returns(returns),
         nav_basis=chosen,
         data_quality=_quality_of(len(navs)),
     )
@@ -358,6 +389,8 @@ __all__ = [
     "yearly_returns",
     "drawdown_recovery_days",
     "rolling_return_summary",
+    "TRAILING_WINDOWS",
+    "trailing_returns",
     "compute_fund_metrics",
     "benchmark_comparison",
     "fund_concentration",
