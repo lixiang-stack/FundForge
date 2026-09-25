@@ -24,6 +24,7 @@ from analysis.engine import (
     sharpe_ratio,
     simple_returns,
     sortino_ratio,
+    trailing_returns,
     yearly_returns,
 )
 from domain.fund import Fund, Holding, IndexPoint, NAVPoint, resolve_benchmark_code
@@ -223,6 +224,25 @@ class TestRollingReturnSummary:
 
     def test_insufficient_returns_gives_none(self):
         assert rolling_return_summary([0.01], window=2) is None
+
+
+class TestTrailingReturns:
+    def test_windows_hand_computed(self):
+        # 恒定日收益 1%：各窗口 = (1.01)^k - 1（手算口径，不用被测函数生成）
+        out = trailing_returns([0.01] * 252)
+        assert out["1m"] == pytest.approx(1.01**21 - 1)
+        assert out["3m"] == pytest.approx(1.01**63 - 1)
+        assert out["6m"] == pytest.approx(1.01**126 - 1)
+        assert out["1y"] == pytest.approx(1.01**252 - 1)
+
+    def test_insufficient_history_gives_none(self):
+        # 30 个收益：仅近1月（21）可得，其余窗口数据不足不编造
+        out = trailing_returns([0.01] * 30)
+        assert out["1m"] == pytest.approx(1.01**21 - 1)
+        assert out["3m"] is None
+        assert out["6m"] is None
+        assert out["1y"] is None
+        assert trailing_returns([]) == {"1m": None, "3m": None, "6m": None, "1y": None}
 
 
 class TestMarketSplit:

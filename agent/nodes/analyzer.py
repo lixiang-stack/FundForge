@@ -235,6 +235,7 @@ class AnalyzerNode:
             annualized_return=primary.annualized_return,
             yearly_returns=primary.yearly_returns,
             rolling_1y=primary.rolling_1y,
+            trailing_returns=primary.trailing_returns,
             benchmark_code=benchmark_codes.get(primary_id),
             excess_return=primary_excess,
             tracking_error=primary_te,
@@ -268,6 +269,7 @@ class AnalyzerNode:
                         benchmark_code=benchmark_codes.get(fid),
                         excess_return=(excess_by_fund.get(fid, (None, None)))[0],
                         tracking_error=(excess_by_fund.get(fid, (None, None)))[1],
+                        trailing_returns=m.trailing_returns,
                         nav_basis=m.nav_basis,
                     )
                     for fid, m in metrics_by_fund.items()
@@ -320,6 +322,7 @@ class AnalyzerNode:
                         "sortino": m.sortino,
                         "yearly_returns": m.yearly_returns,
                         "rolling_1y": m.rolling_1y.model_dump() if m.rolling_1y else None,
+                        "trailing_returns": m.trailing_returns,
                         "benchmark_code": benchmark_codes.get(fid),
                         "excess_return": fid_excess,
                         "tracking_error": fid_te,

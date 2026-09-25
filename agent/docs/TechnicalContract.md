@@ -477,6 +477,7 @@ Analysis Engine 必须是 **deterministic、testable、reproducible** 的纯函�
 - `yearly_returns(series)`：自然年内首末有效净值累计收益（年内不足 2 点不列入）
 - `drawdown_recovery_days(series)`：最大回撤谷底到净值修复的自然日数（未修复 None，无回撤 0）
 - `rolling_return_summary(returns, window=252)`：滚动窗口累计收益分布 min/median/max
+- `trailing_returns(returns)`：最近 21/63/126/252 个交易日累计收益（近似 近1月/近3月/近6月/近1年），有效收益不足窗口为 None
 - `benchmark_comparison(fund_points, basis, index_points)`：(超额累计收益, 近似跟踪误差)——按日期对齐，跟踪误差 = 对齐日收益差的年化标准差（无披露实测值的近似口径）
 - `fund_concentration(holdings, fund_id)`：最新报告期前十大集中度（%）与持仓个股数
 - `holdings_overlap(holdings_a, holdings_b, fund_a, fund_b)`：两基金最新报告期持仓（按股票名）Jaccard 重叠率与共同个股
@@ -490,7 +491,7 @@ Analysis Engine 必须是 **deterministic、testable、reproducible** 的纯函�
 - 已知简化：混合型基准常为"股 + 债"复合，按股票部分近似。
 
 PeerComparison 合同（fund_comparison 任务专属扩展）：
-- `rows`：全部基金同口径同区间指标（含区间起止 / 净值点数 / 累计收益 / 净值口径 / sortino / benchmark_code / excess_return / tracking_error）；
+- `rows`：全部基金同口径同区间指标（含区间起止 / 净值点数 / 累计收益 / 净值口径 / sortino / benchmark_code / excess_return / tracking_error / trailing_returns 区间收益）；
 - `concentration` / `overlaps`：持仓集中度与两两重叠，**仅对比任务计算**（research-with-peers 的持仓维度走 `AnalysisResult.holdings_metrics`）；数据缺失时对应维度为 None / 空列表，不编造。
 
 ---
@@ -539,12 +540,14 @@ class Report(BaseModel):
 
     executive_summary: str
     fund_overview: list[FundSummary]
-    holdings_analysis: str | None            # 持仓概览（前十大 + 集中度/市场分布/行业配置/资产配置，确定性模板）
-    cost_and_rating: str | None              # 费率 / 评级 / 同类排名（确定性模板；排名渲染为池内分位 + 原始名次 + 类型标注，跨类型不可直接比较）
+    holdings_analysis: str | None            # 持仓概览（确定性模板；多基金 = 排名对齐表 + 结构矩阵，单基金 = 明细表 + 结构表）
+    cost_and_rating: str | None              # 费率 / 评级 / 同类排名（确定性模板；排名渲染为池内分位 + 原始名次 + 跨类型口径提示）
     performance_analysis: str
     risk_analysis: str
     peer_comparison: str | None
+    comparison_differences: str | None       # 对比任务：差异总结（Markdown 表：维度 | 各基金列 | 表现更优 | 差距）
     manager_analysis: str | None
+    recommendation: str | None               # 对比任务：明确推荐倾向（确定性模板）
 
     investment_thesis: InvestmentThesis
     key_claims: list[Claim]
@@ -557,11 +560,26 @@ class Report(BaseModel):
 
 Synthesizer 必须输出完整 Report 结构。
 
+**表格化渲染（两种任务形态共同）**：事实/指标类内容一律以 Markdown 表承载，禁止长段落平铺。表格由 `_md_table(header, rows)` 统一拼装，保证分隔行列数与表头强一致（列数错配会让渲染器按分隔行定列数、整表错乱）。数据缺失时**省略该行**并保留其余（不编造、不用「未知」占位）。
+
+单基金研究报告（task_type == fund_research）：
+- 摘要逐维度分段（覆盖对象 / 确定性量化 / 投资论点）；
+- 业绩分析：`指标 | 数值` 矩阵（区间与净值点数 / 累计与年化收益 / 近1月·近3月·近6月·近1年 / 相对基准超额 / 近似跟踪误差 / 滚动252日最低-中位-最高）+ `年份 | 收益` 分年度表；
+- 风险分析：`指标 | 数值` 矩阵（年化波动率 / 最大回撤 / 回撤修复 / 夏普 / Sortino）；
+- 持仓概览：`排名 | 股票 | 占净值比` 前十大明细表 + `持仓结构 | 数值` 表（报告期 / 前十大合计 / 市场分布 / 行业前五 / 资产配置）；
+- 费率、评级与同类排名：`项目 | 数值` 表（管理费 / 托管费 / 销售服务费 / 五星数 / 各机构星级）+ `周期 | 同类排名` 表（附跨类型口径提示）；
+- 章节内不重复罗列 Claim（见「关键结论追溯」）与风险（见「风险提示与免责声明」）。
+
 对比报告一等公民（task_type == fund_comparison）：
-- `metadata.task_type` 记录报告形态来源；
-- 标题覆盖全部基金（`基金对比报告：A vs B`），摘要含对齐区间与确定性领先者；
-- 业绩分析 / 风险分析 / 基金经理逐基金对称呈现（无「主体基金」措辞）；
-- peer_comparison 渲染为 Markdown 对比表格 + 持仓集中度/重叠度小节；
+- `metadata.task_type` 记录报告形态来源；摘要逐维度分段（对比对象 / 对齐区间 / 确定性量化分析 / 投资论点）；
+- 标题覆盖全部基金（`基金对比报告：A vs B`）；
+- **对比指标单一来源**：收益 / 风险 / 风险调整 / 超额合并为一张 Markdown 表（`peer_comparison`，表格上方标注对齐区间），因此对比报告不渲染 `performance_analysis` / `risk_analysis` / `manager_analysis`（空 / None）：基金经理已在多基金概览表列出、业绩与风险指标已并入总览表，避免重复章节；持仓重叠以表格下方的要点行呈现（共同持仓为长列表，不塞进单元格）；
+- 多基金（>1）概览渲染为 Markdown 表（代码 / 名称 / 类型 / 规模 / 基金经理 / 数据质量）；
+- 持仓概览：`排名 | 基金代码…` 前十大排名对齐表 + `持仓结构 | 基金代码…` 结构矩阵（报告期 / 前十大合计 / 市场分布 / 行业前五 / 资产配置）；
+- 费率、评级与同类排名：费率与评级成表（行 = 基金：管理费 / 托管费 / 销售服务费 / 五星数 / 各机构星级，缺失填 —）+ 同类排名按周期对照矩阵（行 = 周期，附跨类型口径提示）；
+- `peer_comparison` 附区间收益表（近1月 / 近3月 / 近6月 / 近1年，按 21/63/126/252 个交易日近似，对齐期末为截止点），全部基金所有窗口缺失时整节省略；
+- `comparison_differences`（差异总结）：表格（维度 | 各基金代码列 | 表现更优 | 差距）逐维度并列各基金取值（可比但无差异时退化为「指标相当」结论句；无可比维度整节省略）；
+- `recommendation`（推荐倾向）：由同口径指标确定性生成取舍结论，尾部标注「属确定性输出，不构成投资建议」；thesis.suitability 已在「对比结论」呈现，此处不重复引用；
 - 渲染标题差异化：同类对比 → 核心指标对比，投资论点 → 对比结论。
 
 ---

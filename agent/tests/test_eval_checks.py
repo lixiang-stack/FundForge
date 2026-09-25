@@ -216,6 +216,9 @@ class TestComparisonChecks:
         title: str = "FundForge 基金对比报告：000001 A vs 519770 B",
         performance: str = "000001 …、519770 …",
         risk: str = "000001 …、519770 …",
+        peer: str = "…",
+        differences: str | None = None,
+        recommendation: str | None = None,
     ) -> Report:
         return Report(
             title=title,
@@ -224,7 +227,9 @@ class TestComparisonChecks:
             executive_summary="s",
             performance_analysis=performance,
             risk_analysis=risk,
-            peer_comparison="…",
+            peer_comparison=peer,
+            comparison_differences=differences,
+            recommendation=recommendation,
             risks_and_disclaimers=["本报告由程序自动生成，不构成任何投资建议。"],
             metadata=ReportMetadata(),
         )
@@ -271,19 +276,20 @@ class TestComparisonChecks:
         )
         assert not passed["comparison_title_covers_funds"]
 
-    def test_performance_sections_symmetric(self):
+    def test_comparison_table_covers_funds(self):
+        table = "| 基金 | 累计收益 |\n| --- | --- |\n| 000001 A | 10% |\n| 519770 B | 39% |"
         passed = self._run_comparison(
-            self._comparison_state(self._comparison_report(), _state()["evidence"]),
-            ["performance_sections_symmetric"],
+            self._comparison_state(self._comparison_report(peer=table), _state()["evidence"]),
+            ["comparison_table_covers_funds"],
         )
-        assert passed["performance_sections_symmetric"]
+        assert passed["comparison_table_covers_funds"]
 
-        primary_only = self._comparison_report(performance="仅 000001", risk="仅 000001")
+        primary_only = self._comparison_report(peer="| 基金 | 累计收益 |\n| --- | --- |\n| 000001 A | 10% |")
         passed = self._run_comparison(
             self._comparison_state(primary_only, _state()["evidence"]),
-            ["performance_sections_symmetric"],
+            ["comparison_table_covers_funds"],
         )
-        assert not passed["performance_sections_symmetric"]
+        assert not passed["comparison_table_covers_funds"]
 
     def test_comparative_claim_present(self):
         cross_evidence = [
@@ -313,3 +319,61 @@ class TestComparisonChecks:
             ["comparative_claim_present"],
         )
         assert passed["comparative_claim_present"]
+
+    def test_comparison_differences_present(self):
+        table = "| 维度 | 表现更优 | 表现较弱 | 差距 |\n| --- | --- | --- | --- |"
+        passed = self._run_comparison(
+            self._comparison_state(
+                self._comparison_report(differences=table), _state()["evidence"]
+            ),
+            ["comparison_differences_present"],
+        )
+        assert passed["comparison_differences_present"]
+
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), _state()["evidence"]),
+            ["comparison_differences_present"],
+        )
+        assert not passed["comparison_differences_present"]
+
+    def test_recommendation_present(self):
+        passed = self._run_comparison(
+            self._comparison_state(
+                self._comparison_report(recommendation="确定性倾向：000001 相对更契合。"),
+                _state()["evidence"],
+            ),
+            ["recommendation_present"],
+        )
+        assert passed["recommendation_present"]
+
+        # 非空但未提及任何预期基金 → 失败（防空洞文本）
+        passed = self._run_comparison(
+            self._comparison_state(
+                self._comparison_report(recommendation="建议自行判断。"), _state()["evidence"]
+            ),
+            ["recommendation_present"],
+        )
+        assert not passed["recommendation_present"]
+
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(), _state()["evidence"]),
+            ["recommendation_present"],
+        )
+        assert not passed["recommendation_present"]
+
+    def test_comparison_tables_present(self):
+        table = "| 基金 | 指标 |\n| --- | --- |\n| 000001 | … |"
+        passed = self._run_comparison(
+            self._comparison_state(self._comparison_report(peer=table), _state()["evidence"]),
+            ["comparison_tables_present"],
+        )
+        assert passed["comparison_tables_present"]
+
+        # 核心指标对比退回平铺描述 → 失败
+        passed = self._run_comparison(
+            self._comparison_state(
+                self._comparison_report(peer="- 000001 …、519770 …"), _state()["evidence"]
+            ),
+            ["comparison_tables_present"],
+        )
+        assert not passed["comparison_tables_present"]

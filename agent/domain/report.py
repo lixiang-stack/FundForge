@@ -48,7 +48,9 @@ class Report(BaseModel):
     performance_analysis: str = ""
     risk_analysis: str = ""
     peer_comparison: str | None = None
+    comparison_differences: str | None = None         # 对比任务：差异总结（Markdown 表）
     manager_analysis: str | None = None
+    recommendation: str | None = None                 # 对比任务：明确推荐倾向（确定性模板）
 
     investment_thesis: InvestmentThesis | None = None   # 偏差：降级时为 None
     key_claims: list[Claim] = Field(default_factory=list)
@@ -63,8 +65,10 @@ class Report(BaseModel):
 def render_markdown(report: Report) -> str:
     """Report → Markdown（纯模板渲染，确定性）。
 
-    对比任务（metadata.task_type == fund_comparison）章节标题差异化：
-    同类对比 → 核心指标对比；投资论点 → 对比结论。
+    对比任务（metadata.task_type == fund_comparison）：同类对比 → 核心指标对比，
+    投资论点 → 对比结论；并额外渲染差异总结与推荐倾向。对比报告的收益/风险/经理
+    指标统一由核心指标对比表承载，故不渲染业绩分析/风险分析/基金经理章节。
+    多基金概览渲染为表格（>1 只）。
     """
     is_comparison = report.metadata.task_type == "fund_comparison"
     peer_heading = "## 核心指标对比" if is_comparison else "## 同类对比"
@@ -95,12 +99,15 @@ def render_markdown(report: Report) -> str:
 
     if report.fund_overview:
         lines += ["## 基金概览"]
-        for s in report.fund_overview:
-            aum = f"{s.aum:.2f}亿" if s.aum is not None else "未知"
-            lines.append(
-                f"- **{s.id} {s.name}**（{s.fund_type or '类型未知'}，规模 {aum}，"
-                f"基金经理 {s.manager_name or '未知'}，数据质量 {s.data_quality}）"
-            )
+        if len(report.fund_overview) > 1:
+            lines += _overview_table(report.fund_overview)
+        else:
+            for s in report.fund_overview:
+                aum = f"{s.aum:.2f}亿" if s.aum is not None else "未知"
+                lines.append(
+                    f"- **{s.id} {s.name}**（{s.fund_type or '类型未知'}，规模 {aum}，"
+                    f"基金经理 {s.manager_name or '未知'}，数据质量 {s.data_quality}）"
+                )
         lines.append("")
 
     if report.holdings_analysis:
@@ -113,26 +120,28 @@ def render_markdown(report: Report) -> str:
         lines += ["## 风险分析", report.risk_analysis, ""]
     if report.peer_comparison:
         lines += [peer_heading, report.peer_comparison, ""]
+    if report.comparison_differences:
+        lines += ["## 差异总结", report.comparison_differences, ""]
     if report.manager_analysis:
         lines += ["## 基金经理", report.manager_analysis, ""]
 
     thesis = report.investment_thesis
     if thesis is not None:
+        # Claim 列表见「关键结论追溯」、风险见「风险提示与免责声明」，此处不重复罗列
         lines += [
             thesis_heading,
             f"**结论**：{thesis.suitability}（证据充分度 {thesis.confidence:.2f}）",
             "",
             thesis.summary,
             "",
-            "**关键结论**：",
         ]
-        for c in thesis.claims:
-            lines.append(f"- [{c.strength}] {c.statement}（依据: {', '.join(c.evidence_ids)}）")
         lines += _bullets("积极因素", thesis.positives)
         lines += _bullets("消极因素", thesis.negatives)
-        lines += _bullets("风险", thesis.risks)
         lines += _bullets("关键假设", thesis.key_assumptions)
         lines.append("")
+
+    if report.recommendation:
+        lines += ["## 推荐倾向", report.recommendation, ""]
 
     if report.key_claims:
         lines += ["## 关键结论追溯"]
@@ -148,6 +157,21 @@ def render_markdown(report: Report) -> str:
     lines += ["## 风险提示与免责声明"]
     lines += [f"- {r}" for r in report.risks_and_disclaimers]
     return "\n".join(lines)
+
+
+def _overview_table(summaries: list[FundSummary]) -> list[str]:
+    """多基金概览 → Markdown 表格（单基金仍走 bullet，保持研究报告中观感一致）。"""
+    lines = [
+        "| 代码 | 名称 | 类型 | 规模 | 基金经理 | 数据质量 |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for s in summaries:
+        aum = f"{s.aum:.2f}亿" if s.aum is not None else "未知"
+        lines.append(
+            f"| {s.id} | {s.name} | {s.fund_type or '类型未知'} | {aum} "
+            f"| {s.manager_name or '未知'} | {s.data_quality} |"
+        )
+    return lines
 
 
 def _bullets(title: str, items: list[str]) -> list[str]:

@@ -39,6 +39,7 @@ class PerformanceAnalysis(BaseModel):
     annualized_return: float | None = None
     yearly_returns: dict[str, float | None] | None = None   # 自然年 → 年内累计收益（不足 2 个有效点的年份不列入）
     rolling_1y: RollingReturnSummary | None = None
+    trailing_returns: dict[str, float | None] | None = None  # 区间收益：1m/3m/6m/1y（21/63/126/252 个交易日），不足窗口为 None
     benchmark_code: str | None = None    # 基准指数代码（启发式解析）；None = 无法解析不计算
     excess_return: float | None = None   # 对齐区间内基金累计收益 − 基准累计收益
     tracking_error: float | None = None  # 近似跟踪误差（对齐日收益差的年化标准差）
@@ -82,6 +83,7 @@ class PeerMetricsRow(BaseModel):
     benchmark_code: str | None = None
     excess_return: float | None = None
     tracking_error: float | None = None
+    trailing_returns: dict[str, float | None] | None = None  # 区间收益：1m/3m/6m/1y（同口径对齐期末）
     nav_basis: str | None = None
 
 
@@ -126,6 +128,7 @@ class FundMetrics(BaseModel):
     sortino: float | None = None
     yearly_returns: dict[str, float | None] | None = None
     rolling_1y: RollingReturnSummary | None = None
+    trailing_returns: dict[str, float | None] | None = None  # 区间收益：1m/3m/6m/1y（21/63/126/252 个交易日）
     nav_basis: str                                # 净值口径："acc" | "unit"（Engine 必填，默认选择属于 Engine 而非调用方）
     data_quality: DataQuality = DataQuality.COMPLETE
 
