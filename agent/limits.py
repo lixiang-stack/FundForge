@@ -18,6 +18,9 @@ LLM_MAX_TOKENS = 8000  # chat/completions 输出 token 上限（4000 实测会�
 COLLECTOR_FUND_CONCURRENCY = 4  # 同时采集的基金数上限
 COLLECTOR_TOOL_CONCURRENCY = 3  # 单只基金内部并发数（info / performance / holdings）
 
+# ---- 基金筛选（fund_screening） ----
+SCREENING_PRESELECT_LIMIT = 30  # 预选集大小 M：候选池预筛后进入 NAV 采集与风险指标计算的基金数上限
+
 __all__ = [
     "THESIS_MAX_CLAIMS",
     "THESIS_MAX_SUMMARY_CHARS",
@@ -26,4 +29,5 @@ __all__ = [
     "LLM_MAX_TOKENS",
     "COLLECTOR_FUND_CONCURRENCY",
     "COLLECTOR_TOOL_CONCURRENCY",
+    "SCREENING_PRESELECT_LIMIT",
 ]

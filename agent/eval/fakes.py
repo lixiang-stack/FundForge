@@ -13,6 +13,19 @@ from collections.abc import Callable
 
 from domain.thesis import Claim, InvestmentThesis
 from llm.base import LLMResponse
+from nodes.screener import parse_screen_spec_rules
+
+
+def _screening_spec_response(messages) -> LLMResponse | None:
+    """screener prompt（ScreenSpec 结构化输出）→ 规则解析结果作为确定性 JSON。
+
+    Fake Provider 只服务 thesis 形状的 prompt；screening 意图下用规则解析产物
+    充当 LLM 结构化输出（确定性替身），否则 thesis 证据解析会在筛选 prompt 上崩。
+    """
+    if "ScreenSpec" not in messages[0].content:
+        return None
+    spec = parse_screen_spec_rules(messages[1].content)
+    return LLMResponse(content=spec.model_dump_json(), input_tokens=10, output_tokens=10)
 
 
 def _evidence_ids_from_prompt(messages) -> list[str]:
@@ -42,6 +55,9 @@ class DeterministicThesisProvider:
     """固定产出 1 条绑定「每基金首条证据」的 Claim（suitability 回应长期持有维度）。"""
 
     def generate(self, messages, *, structured_output=None) -> LLMResponse:
+        screen = _screening_spec_response(messages)
+        if screen is not None:
+            return screen
         ev_ids = _per_fund_evidence_ids(messages)
         thesis = InvestmentThesis(
             summary="概要（确定性 Fake LLM 输出）",
@@ -65,6 +81,9 @@ class BadBindingThesisProvider:
     """c1 空绑定（降级 data_gaps）/ c2 未知引用（丢弃并记 issue）/ c3 有效绑定。"""
 
     def generate(self, messages, *, structured_output=None) -> LLMResponse:
+        screen = _screening_spec_response(messages)
+        if screen is not None:
+            return screen
         ev_ids = _evidence_ids_from_prompt(messages)
         thesis = InvestmentThesis(
             summary="概要（坏绑定回归用例）",

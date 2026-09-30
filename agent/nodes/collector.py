@@ -39,6 +39,7 @@ from domain.fund import (
 )
 from domain.plan import ResearchPlan
 from domain.shared import DataQuality
+from domain.task_type import TaskType
 from langchain_core.tools import BaseTool
 from limits import COLLECTOR_FUND_CONCURRENCY, COLLECTOR_TOOL_CONCURRENCY
 from state import FundForgeState
@@ -340,6 +341,8 @@ class CollectorNode:
         self._tools = tools
 
     def __call__(self, state: FundForgeState) -> CollectorOutput:
+        if state.get("task_type") == TaskType.FUND_SCREENING:
+            return self._collect_screening(state)
         plan = ResearchPlan.from_state(state.get("research_plan"))
         fund_ids = list(plan.fund_ids) if plan else []
         if not fund_ids:
@@ -385,6 +388,76 @@ class CollectorNode:
             len(collected["tool_calls"]),
         )
         return collected
+
+    # ---- 筛选路径（task_type=fund_screening）：轻量采集，仅 info + performance ----
+    # 排行表已提供收益与费率口径，持仓/行业/评级不进入筛选与短名单理由；
+    # fund_ids 来自预选集（Screener 写入 State），research_plan 不参与。
+
+    def _collect_screening(self, state: FundForgeState) -> CollectorOutput:
+        fund_ids = [str(fid) for fid in state.get("fund_ids", [])]
+        if not fund_ids:
+            logger.warning("collector: screening 预选集为空，跳过采集")
+            return CollectorOutput(
+                fund_ids=[],
+                funds_summary=[],
+                evidence=list(state.get("evidence", [])),
+                tool_calls=list(state.get("tool_calls", [])),
+                data_quality_issues=[
+                    *state.get("data_quality_issues", []),
+                    "筛选预选集为空，未执行数据采集",
+                ],
+            )
+        workers = min(COLLECTOR_FUND_CONCURRENCY, len(fund_ids))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(self._collect_fund_screening, fund_ids))
+        evidence = list(state.get("evidence", []))
+        tool_calls = list(state.get("tool_calls", []))
+        issues: list[str] = []
+        summaries: list[FundSummary] = []
+        for result in results:
+            if result.summary is not None:
+                summaries.append(result.summary)
+            evidence.extend(result.evidence)
+            tool_calls.extend(result.tool_calls)
+            issues.extend(result.issues)
+        logger.info(
+            "collector: screening %d funds collected, %d evidence, %d tool calls",
+            len(summaries), len(evidence), len(tool_calls),
+        )
+        return CollectorOutput(
+            fund_ids=fund_ids,
+            funds_summary=summaries,
+            evidence=evidence,
+            tool_calls=tool_calls,
+            data_quality_issues=[*state.get("data_quality_issues", []), *issues],
+        )
+
+    def _collect_fund_screening(self, code: str) -> FundCollectionResult:
+        """筛选路径单基金采集：info + performance 并发，失败降级并记录问题。"""
+        result = FundCollectionResult(fund_id=code)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            info_future = pool.submit(record_tool_call, self._tools.get_fund_info, {"fund_id": code})
+            perf_future = pool.submit(record_tool_call, self._tools.get_fund_performance, {"fund_id": code})
+            fund, info_record = info_future.result()
+            perf, perf_record = perf_future.result()
+        result.tool_calls.extend([info_record, perf_record])
+
+        if not info_record.success and not perf_record.success:
+            result.issues.append(f"{code}: 基金数据获取完全失败")
+            return result
+        if not info_record.success:
+            result.issues.append(f"{code}: 基金基本信息缺失（get_fund_info 失败）")
+        if not perf_record.success:
+            result.issues.append(f"{code}: 基金净值序列缺失（get_fund_performance 失败）")
+        elif perf is not None and perf.data_quality == DataQuality.MISSING:
+            result.issues.append(f"{code}: 净值序列为空，data_quality=missing")
+
+        if info_record.success and fund is not None:
+            result.summary = summarize_fund(fund)
+            result.evidence.append(fund_evidence(fund))
+        if perf_record.success and perf is not None:
+            result.evidence.append(performance_evidence(perf))
+        return result
 
     def _collect_benchmarks(
         self, results: list[FundCollectionResult]

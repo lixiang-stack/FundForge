@@ -101,6 +101,47 @@ FUND_LIST_ROWS = [
     },
 ]
 
+# 排行表（FIELD_MAPS["fund_rank"] 标准化输出）：收益列保留源格式（百分比字符串，"--"=缺失），
+# 由 screener 侧解析；形状由 tests/test_collector_client.py 与 test_screening.py 锁定
+RANK_ROWS = [
+    {
+        "fund_code": "001594",
+        "fund_name": "天弘中证500指数A",
+        "nav_date": "2026-09-25",
+        "unit_nav": 1.8234,
+        "acc_nav": 1.8234,
+        "daily_return": "0.52%",
+        "return_1w": "1.20%",
+        "return_1m": "3.40%",
+        "return_3m": "8.10%",
+        "return_6m": "12.00%",
+        "return_1y": "15.30%",
+        "return_2y": "22.00%",
+        "return_3y": "35.60%",
+        "return_ytd": "14.00%",
+        "return_since_inception": "82.40%",
+        "fee_rate": "0.15%",
+    },
+    {
+        "fund_code": "000961",
+        "fund_name": "天弘沪深300ETF联接A",
+        "nav_date": "2026-09-25",
+        "unit_nav": 1.1021,
+        "acc_nav": 1.1021,
+        "daily_return": "0.31%",
+        "return_1w": "0.80%",
+        "return_1m": "2.10%",
+        "return_3m": "5.60%",
+        "return_6m": "9.20%",
+        "return_1y": "11.40%",
+        "return_2y": "18.60%",
+        "return_3y": "--",
+        "return_ytd": "10.20%",
+        "return_since_inception": "45.10%",
+        "fee_rate": "0.10%",
+    },
+]
+
 
 def make_transport(
     detail_rows: list | None = None,
@@ -114,6 +155,7 @@ def make_transport(
     achievement_rows: list | None = None,
     rating_rows: list | None = None,
     index_rows: list | None = None,
+    rank_rows: list | None = None,
     status: int = 200,
 ) -> httpx.MockTransport:
     """按路径模拟 collector 响应；status 非 200 时统一返回错误。"""
@@ -122,6 +164,8 @@ def make_transport(
         if status != 200:
             return httpx.Response(status, json={"detail": "boom"})
         path = request.url.path
+        if path == "/api/funds/rank":
+            return httpx.Response(200, json=rank_rows if rank_rows is not None else RANK_ROWS)
         if path.endswith("/detail"):
             return httpx.Response(200, json=detail_rows if detail_rows is not None else DETAIL_ROWS)
         if path.endswith("/nav"):
@@ -170,6 +214,7 @@ def make_tools(
     achievement_rows: list | None = None,
     rating_rows: list | None = None,
     index_rows: list | None = None,
+    rank_rows: list | None = None,
     status: int = 200,
 ):
     """构建 (tools, store, client) 三元组，client 使用 mock transport。"""
@@ -187,6 +232,7 @@ def make_tools(
             achievement_rows,
             rating_rows,
             index_rows,
+            rank_rows,
             status,
         ),
     )

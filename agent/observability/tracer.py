@@ -151,11 +151,33 @@ def _summarize_synthesizer(state: dict, output: dict) -> dict:
     }
 
 
+def _summarize_screener(state: dict, output: dict) -> dict:
+    meta = _get(output, "screening_meta")
+    return {
+        "universe_size": getattr(meta, "universe_size", None),
+        "preselected_size": getattr(meta, "preselected_size", None),
+        "anchor": _short(getattr(meta, "anchor", None), 60),
+        "fund_ids": _len(_get(output, "fund_ids")),
+        "skipped_no_anchor": getattr(meta, "skipped_no_anchor", None),
+    }
+
+
+def _summarize_screen_finalize(state: dict, output: dict) -> dict:
+    result = _get(output, "screening_result")
+    return {
+        "entries": _len(getattr(result, "entries", None)),
+        "empty_reason": _short(getattr(result, "empty_reason", None), 60),
+        "data_gaps": _len(getattr(result, "data_gaps", None)),
+    }
+
+
 _NODE_SUMMARIZERS: dict[str, Callable[[dict, dict], dict]] = {
     "router": _summarize_router,
     "planner": _summarize_planner,
+    "screener": _summarize_screener,
     "collector": _summarize_collector,
     "analyzer": _summarize_analyzer,
+    "screen_finalize": _summarize_screen_finalize,
     "researcher": _summarize_researcher,
     "thesis": _summarize_thesis,
     "evaluator": _summarize_evaluator,

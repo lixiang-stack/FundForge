@@ -17,6 +17,8 @@ from nodes import (
     RepairOutput,
     ResearcherOutput,
     RouterOutput,
+    ScreenFinalizeOutput,
+    ScreenerOutput,
     SynthesizerOutput,
     ThesisOutput,
 )
@@ -25,8 +27,10 @@ from state import FundForgeState
 _OUTPUTS = {
     "RouterOutput": RouterOutput,
     "PlannerOutput": PlannerOutput,
+    "ScreenerOutput": ScreenerOutput,
     "CollectorOutput": CollectorOutput,
     "AnalyzerOutput": AnalyzerOutput,
+    "ScreenFinalizeOutput": ScreenFinalizeOutput,
     "ResearcherOutput": ResearcherOutput,
     "ThesisOutput": ThesisOutput,
     "EvaluatorOutput": EvaluatorOutput,

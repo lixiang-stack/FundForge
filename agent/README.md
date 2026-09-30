@@ -21,23 +21,54 @@ FundForge 的 AI 研究工作流：接收自然语言问题（单基金分析 / 
 
 ## 工作流
 
+```mermaid
+flowchart TD
+    START([开始]) --> router
+    router --> planner
+    planner -->|fund_screening| screener
+    planner -->|有 fund_ids| collector
+    planner -->|无 fund_ids| synthesizer
+
+    screener --> collector
+    collector --> analyzer
+    analyzer -->|fund_screening| screen_finalize
+    analyzer -->|其余任务| researcher
+    screen_finalize --> evaluator
+
+    researcher --> thesis
+    thesis --> evaluator
+    evaluator -->|PASS| synthesizer
+    evaluator -->|FAIL 且 iteration 少于上限| repair
+    repair --> evaluator
+    evaluator -->|FAIL 且超限| synthesizer
+    synthesizer --> END([结束])
+
+    classDef screen fill:#e8f4ea,stroke:#4a7
+    class screener,screen_finalize screen
 ```
-router → planner → collector → analyzer → researcher → thesis → evaluator → repair? → synthesizer
-                                                                              │
-                                                         FAIL 且未超修复上限 ──┘
-```
+
+筛选任务（`fund_screening`）的两处例外，与上图的差别同源：
+
+- 不经 `researcher` / `thesis` —— 筛选产短名单与披露，不产出投资论点；
+- `evaluator` FAIL 直达 `synthesizer`，不进 `repair` 回路 —— 该路径全确定性，
+  没有可修的 LLM 产物。
+
+「无 fund_ids」是所有任务类型共用的兜底短路；`fund_screening` 先命中筛选
+分支，不会走到它。路由判据以 `graph.py` docstring 的对照表为准。
 
 | 节点 | 职责 |
 | ---- | ---- |
-| `router` | 意图识别与任务分类（单基金 / 对比等），规则优先、LLM 兜底 |
+| `router` | 意图识别与任务分类（单基金 / 对比 / 筛选等），规则优先、LLM 兜底 |
 | `planner` | 生成研究计划（主基金 + 同类基金、研究重点） |
-| `collector` | 通过 collector API 采集基金数据（基本信息/净值/持仓/行业配置/资产配置/费率/同类排名/评级/基准指数），产出 Evidence 与 Tool 调用记录 |
-| `analyzer` | 确定性量化分析引擎（收益 / 风险指标 / Sortino / 分年度 / 滚动收益 / 回撤修复期 / 超额收益 / 持仓集中度 / 市场分布 / 同类重叠），不依赖 LLM |
+| `screener` | 筛选任务（fund_screening）：NL→ScreenSpec（LLM 结构化输出 + 规则兜底）、排行表候选池预筛 → 预选集 Top M（确定性） |
+| `collector` | 通过 collector API 采集基金数据（基本信息/净值/持仓/行业配置/资产配置/费率/同类排名/评级/基准指数；筛选任务降为基本信息+净值），产出 Evidence 与 Tool 调用记录 |
+| `analyzer` | 确定性量化分析引擎（收益 / 风险指标 / Sortino / 分年度 / 滚动收益 / 回撤修复期 / 超额收益 / 持仓集中度 / 市场分布 / 同类重叠；筛选任务按每只基金 trailing 窗口计算、跳过持仓与基准），不依赖 LLM |
+| `screen_finalize` | 筛选任务：预选集硬过滤与最终排序 → 短名单 + 全部披露（确定性） |
 | `researcher` | 补充研究项 |
 | `thesis` | LLM 生成投资论点，**Evidence-Claim 强制绑定**（无证据的结论降级为数据缺口） |
-| `evaluator` | 结构化评估（事实 / 证据 / 缺项 / 风险），产出评分与修复决策 |
+| `evaluator` | 结构化评估（事实 / 证据 / 缺项 / 风险；筛选任务为披露完整性检查分支），产出评分与修复决策 |
 | `repair` | 有限修复（max=1） |
-| `synthesizer` | 结构化报告与元数据 |
+| `synthesizer` | 结构化报告与元数据（对比 / 筛选有专属报告形态） |
 
 ---
 

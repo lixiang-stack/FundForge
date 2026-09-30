@@ -19,6 +19,7 @@ NavIndicator = Literal["unit", "acc"]
 # ---- API 路径常量（client 请求与 evidence source 字符串统一从此引用） ----
 
 FUND_LIST_PATH = "/api/funds"
+FUND_RANK_PATH = "/api/funds/rank"
 FUND_DETAIL_PATH = "/api/funds/{code}/detail"
 FUND_NAV_PATH = "/api/funds/{code}/nav"
 FUND_HOLDINGS_PATH = "/api/funds/{code}/holdings/stock"
@@ -132,6 +133,11 @@ class CollectorClient:
             self._fund_list_cache = self._get(FUND_LIST_PATH)
         return self._fund_list_cache
 
+    # ---- Fund Rank（按主类排行表：基金代码/名称/区间收益/手续费，用于筛选候选池） ----
+
+    def get_fund_rank(self, symbol: str = "全部") -> list[dict[str, Any]]:
+        return self._get(FUND_RANK_PATH, params={"symbol": symbol})
+
     # ---- internals ----
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -176,6 +182,7 @@ __all__ = [
     "CollectorError",
     "NavIndicator",
     "FUND_LIST_PATH",
+    "FUND_RANK_PATH",
     "FUND_DETAIL_PATH",
     "FUND_NAV_PATH",
     "FUND_HOLDINGS_PATH",

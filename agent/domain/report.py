@@ -12,8 +12,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from formatting import TABLE_MISSING, fmt_pct, fmt_ratio
 from domain.analysis import AnalysisResult
 from domain.fund import FundSummary
+from domain.screening import ScreenResult
 from domain.thesis import Claim, InvestmentThesis
 
 _MANDATORY_DISCLAIMER = "本报告由程序自动生成，不构成任何投资建议。"
@@ -59,6 +61,7 @@ class Report(BaseModel):
     risks_and_disclaimers: list[str] = Field(default_factory=list)
 
     analysis: AnalysisResult | None = None              # 结构化分析结果（供下游/展示复用）
+    screening_result: ScreenResult | None = None        # 筛选任务：短名单与披露（渲染为一等章节）
     metadata: ReportMetadata = Field(default_factory=ReportMetadata)
 
 
@@ -96,6 +99,9 @@ def render_markdown(report: Report) -> str:
         report.executive_summary,
         "",
     ]
+
+    if report.screening_result is not None:
+        lines += _screening_sections(report.screening_result)
 
     if report.fund_overview:
         lines += ["## 基金概览"]
@@ -157,6 +163,39 @@ def render_markdown(report: Report) -> str:
     lines += ["## 风险提示与免责声明"]
     lines += [f"- {r}" for r in report.risks_and_disclaimers]
     return "\n".join(lines)
+
+
+def _screening_sections(result: ScreenResult) -> list[str]:
+    """筛选任务专属章节：条件复述 + 短名单表（或 0 只时的诚实结果）。"""
+    lines = ["## 筛选条件（系统理解）", ""]
+    lines += [f"- {c}" for c in result.conditions] or ["- （无）"]
+    lines.append("")
+    if not result.entries:
+        lines += ["## 筛选结果", "", result.empty_reason or "无可满足条件的基金。", ""]
+        return lines
+    lines += [f"## 推荐短名单（Top {result.top_n}）", ""]
+    lines += _md_screening_table(result.entries)
+    lines.append("")
+    for i, e in enumerate(result.entries, 1):
+        name = f" {e.name}" if e.name else ""
+        lines.append(f"{i}. **{e.fund_id}{name}** — {e.rationale}")
+    lines.append("")
+    return lines
+
+
+def _md_screening_table(entries: list) -> list[str]:
+    lines = [
+        "| # | 代码 | 名称 | 年化 | 最大回撤 | 夏普 | 规模 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for i, e in enumerate(entries, 1):
+        aum = f"{e.aum:.2f}亿" if e.aum is not None else "—"
+        name = e.name or "—"
+        lines.append(
+            f"| {i} | {e.fund_id} | {name} | {fmt_pct(e.annualized_return, TABLE_MISSING)} "
+            f"| {fmt_pct(e.max_drawdown, TABLE_MISSING)} | {fmt_ratio(e.sharpe, TABLE_MISSING)} | {aum} |"
+        )
+    return lines
 
 
 def _overview_table(summaries: list[FundSummary]) -> list[str]:

@@ -36,6 +36,17 @@ class PlannerNode:
         rule_hits = [classification.rule_hit]
         confidence = classification.confidence
 
+        # 筛选任务：候选池来自排行表，无代码是常态；不产「无法规划」误导注记，
+        # 预选集由 Screener 写入 State（research_plan.fund_ids 保持为空）
+        if task_type == TaskType.FUND_SCREENING:
+            plan = ResearchPlan(
+                task_type=task_type,
+                fund_ids=[],
+                classification_rule_hits=rule_hits,
+                classification_confidence=confidence,
+            )
+            return PlannerOutput(task_type=task_type, research_plan=plan)
+
         if not fund_ids:
             note = "query 中未发现 6 位基金代码，无法规划数据采集"
             logger.warning("planner: %s", note)

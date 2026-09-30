@@ -17,6 +17,7 @@ class TaskType(StrEnum):
 class ClassificationRuleHit(StrEnum):
     """意图分类规则命中标识（nodes/intent.py 规则引擎；R6 为 Planner 可行性降级标记）。"""
 
+    R0_SCREENING_INTENT = "R0_screening_intent"
     R1_DUAL_INTENT_SUBJECT = "R1_dual_intent_subject"
     R2_ANALYSIS_INTENT = "R2_analysis_intent"
     R3_COMPARISON_INTENT = "R3_comparison_intent"
@@ -28,6 +29,7 @@ class ClassificationRuleHit(StrEnum):
 # 确定性意图分类关键词（Router 分类 / Evaluator 对齐检查共用）
 ANALYSIS_INTENT_KEYWORDS = ("分析", "研究", "适合", "持有", "值得", "评估")
 COMPARISON_INTENT_KEYWORDS = ("对比", "比较", "相比", "哪个好", "哪一个好", "更值得", "哪个更", "哪一个更")
+SCREENING_INTENT_KEYWORDS = ("筛选", "推荐几只", "帮我选", "选几只", "挑几只", "选基", "帮我挑")
 
 
 __all__ = [
@@ -35,4 +37,5 @@ __all__ = [
     "ClassificationRuleHit",
     "ANALYSIS_INTENT_KEYWORDS",
     "COMPARISON_INTENT_KEYWORDS",
+    "SCREENING_INTENT_KEYWORDS",
 ]
