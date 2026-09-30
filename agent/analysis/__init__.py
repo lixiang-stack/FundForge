@@ -5,6 +5,8 @@
 """
 
 from analysis.engine import (
+    DAYS_PER_YEAR,
+    DAYS_PER_YEAR_JULIAN,
     annualized_return,
     annualized_volatility,
     benchmark_comparison,
@@ -24,6 +26,8 @@ from analysis.engine import (
 )
 
 __all__ = [
+    "DAYS_PER_YEAR",
+    "DAYS_PER_YEAR_JULIAN",
     "nav_value",
     "simple_returns",
     "cumulative_return",

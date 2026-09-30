@@ -11,6 +11,8 @@ Case 引用未注册的检查点名 → 判失败（fail fast，防止拼错检�
 from typing import Any, Callable
 
 from eval.models import CheckResult, CheckSpec, EvalCase
+from domain.screening import BIAS_DISCLOSURE
+from domain.report import render_markdown
 from nodes.evaluator import claim_fund_ids
 
 _MANDATORY_DISCLAIMER = "不构成任何投资建议"
@@ -302,6 +304,89 @@ def comparison_tables_present(state: dict, case: EvalCase, params: dict[str, Any
     return None
 
 
+# ---- 基金筛选（fund_screening）检查点 ----
+
+def _screening_result(state: dict):
+    return state.get("screening_result")
+
+
+def _screen_spec(state: dict):
+    return state.get("screen_spec")
+
+
+def _screen_disclosure_text(state: dict) -> str:
+    """screening_result.data_gaps + 报告缺口的合并文本（披露口径对齐 Evaluator）。"""
+    result = _screening_result(state)
+    report = _report(state)
+    parts = list(result.data_gaps) if result is not None else []
+    if report is not None:
+        parts += list(report.data_gaps_and_limitations)
+    return "\n".join(parts)
+
+
+def screening_entries_min(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    result = _screening_result(state)
+    if result is None:
+        return "screening_result 缺失"
+    minimum = int(params.get("min", 1))
+    if len(result.entries) < minimum:
+        return f"短名单条目 {len(result.entries)} < {minimum}"
+    return None
+
+
+def screening_universe_disclosed(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """候选池大小与预筛锚点必须披露，且锚点进入报告摘要。"""
+    result = _screening_result(state)
+    if result is None:
+        return "screening_result 缺失"
+    if result.universe_size <= 0 or not result.anchor:
+        return "候选池大小或预筛锚点未披露"
+    report = _report(state)
+    if report is not None and result.anchor not in report.executive_summary:
+        return "报告摘要未披露预筛锚点"
+    return None
+
+
+def screening_bias_disclosed_if_risk(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """使用预选集级风险指标时，样本偏差披露必须存在（对齐 Evaluator 口径）。"""
+    spec = _screen_spec(state)
+    result = _screening_result(state)
+    if spec is None or result is None:
+        return "screen_spec/screening_result 缺失"
+    if not spec.uses_risk_metrics():
+        return None
+    if BIAS_DISCLOSURE not in _screen_disclosure_text(state):
+        return "使用了风险指标但未披露预选集样本偏差"
+    return None
+
+
+def screening_unsupported_disclosed(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """ScreenSpec.unsupported_requirements 必须逐条进入缺口披露（不装作满足）。"""
+    spec = _screen_spec(state)
+    if spec is None:
+        return "screen_spec 缺失"
+    disclosed = _screen_disclosure_text(state)
+    missing = [i for i in spec.unsupported_requirements if i and i not in disclosed]
+    if missing:
+        return f"无法落地条件未披露：{missing}"
+    return None
+
+
+def screening_zero_reason_disclosed(state: dict, case: EvalCase, params: dict[str, Any]) -> str | None:
+    """空短名单必须给出原因，且渲染进报告（诚实空结果，绝不放宽阈值）。"""
+    result = _screening_result(state)
+    if result is None:
+        return "screening_result 缺失"
+    if result.entries:
+        return None
+    if not result.empty_reason:
+        return "短名单为空但未说明原因"
+    report = _report(state)
+    if report is not None and result.empty_reason not in render_markdown(report):
+        return "空结果原因未渲染进报告"
+    return None
+
+
 REGISTRY: dict[str, Callable[[dict, EvalCase, dict[str, Any]], str | None]] = {
     "report_exists": report_exists,
     "has_suitability": has_suitability,
@@ -328,6 +413,11 @@ REGISTRY: dict[str, Callable[[dict, EvalCase, dict[str, Any]], str | None]] = {
     "data_quality_issues_min": data_quality_issues_min,
     "report_data_gaps_contain": report_data_gaps_contain,
     "suitability_mentions": suitability_mentions,
+    "screening_entries_min": screening_entries_min,
+    "screening_universe_disclosed": screening_universe_disclosed,
+    "screening_bias_disclosed_if_risk": screening_bias_disclosed_if_risk,
+    "screening_unsupported_disclosed": screening_unsupported_disclosed,
+    "screening_zero_reason_disclosed": screening_zero_reason_disclosed,
 }
 
 

@@ -3,6 +3,8 @@
 规则按序命中（首个命中生效），命中记录与置信度随分类结果输出，
 供 Evaluator 对齐检查与后续评测集使用：
 
+R0 screening_intent   筛选词（筛选/推荐几只/帮我选…）且不含 6 位代码
+                      → SCREENING（条件选基，无具体主体），conf 0.9
 R1 dual_intent        对比词 + 分析词 + 强主题词（分析/研究/评估）
                       → RESEARCH（带 peer 的主体研究，V1 核心 Case），conf 0.8
 R2 analysis_intent    仅分析词 → RESEARCH，conf 0.9
@@ -19,6 +21,7 @@ from pydantic import BaseModel, Field
 from domain.task_type import (
     COMPARISON_INTENT_KEYWORDS,
     ANALYSIS_INTENT_KEYWORDS,
+    SCREENING_INTENT_KEYWORDS,
     ClassificationRuleHit,
     TaskType,
 )
@@ -54,7 +57,16 @@ def classify(query: str) -> IntentClassification:
     has_analysis = any(kw in query for kw in ANALYSIS_INTENT_KEYWORDS)
     has_comparison = any(kw in query for kw in COMPARISON_INTENT_KEYWORDS)
     has_subject = any(kw in query for kw in _SUBJECT_KEYWORDS)
+    has_screening = any(kw in query for kw in SCREENING_INTENT_KEYWORDS)
 
+    # 筛选意图优先且要求无代码：含代码视为具体基金分析/对比（避免混合意图误路由）
+    if has_screening and not fund_ids:
+        return IntentClassification(
+            task_type=TaskType.FUND_SCREENING,
+            rule_hit=ClassificationRuleHit.R0_SCREENING_INTENT,
+            confidence=0.9,
+            fund_ids=[],
+        )
     if has_comparison and has_analysis and has_subject:
         return IntentClassification(
             task_type=TaskType.FUND_RESEARCH,

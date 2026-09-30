@@ -13,6 +13,7 @@ from typing import TypedDict
 from datetime import datetime, timedelta
 
 from analysis import (
+    DAYS_PER_YEAR,
     benchmark_comparison,
     compute_fund_metrics,
     fund_concentration,
@@ -33,6 +34,7 @@ from domain.analysis import (
 from domain.evidence import Evidence, EvidenceType
 from domain.fund import Holding, resolve_benchmark_code
 from domain.plan import ResearchPlan
+from domain.screening import ScreenSpec
 from domain.shared import DataQuality
 from domain.task_type import TaskType
 from state import FundForgeState
@@ -41,7 +43,7 @@ from store import FundStore
 logger = logging.getLogger(__name__)
 
 _ANALYSIS_SOURCE = "fundforge:analysis-engine"
-_ALIGNMENT_MAX_DAYS = 365 * 10   # 对齐窗口上限：10 年
+_ALIGNMENT_MAX_DAYS = DAYS_PER_YEAR * 10   # 对齐窗口上限：10 年
 _MIN_ALIGNMENT_DAYS = 30         # 低于该窗口的对比无统计意义
 _POINT_COUNT_DIFF_TOLERANCE = 0.01  # 同窗口净值点数差容忍度，超过即向下游披露
 
@@ -87,6 +89,10 @@ class AnalyzerNode:
         if not fund_ids:
             logger.warning("analyzer: 没有 fund_ids，跳过分析")
             return {}
+
+        task_type = plan.task_type if plan else state.get("task_type")
+        if task_type == TaskType.FUND_SCREENING:
+            return self._analyze_screening(state, fund_ids)
 
         # 主基金：优先 plan.primary_fund_id（显式声明），回退 fund_ids[0]
         primary_id = plan.primary_fund_id if plan and plan.primary_fund_id else fund_ids[0]
@@ -152,7 +158,6 @@ class AnalyzerNode:
 
         # 持仓分析：集中度与市场分布对所有任务计算（研究报告同样呈现）；
         # 重叠度仅多基金场景（对比价值所在），PeerComparison.concentration 仅对比任务填充
-        task_type = plan.task_type if plan else state.get("task_type")
         holdings_by_fund: dict[str, list[Holding]] = {
             fid: self._store.get_holdings(fid) for fid in fund_ids
         }
@@ -209,6 +214,116 @@ class AnalyzerNode:
             analysis=analysis,
             evidence=[*state.get("evidence", []), *evidence],
             data_quality_issues=[*state.get("data_quality_issues", []), *issues],
+        )
+
+    # ---- 筛选路径（task_type=fund_screening）----
+    # 排序/过滤语义要求「各基金按自身 trailing lookback 窗口」指标可比，
+    # 跨基金对齐会把全部基金拉齐到最短历史（语义错误），持仓/基准不进入筛选。
+
+    def _analyze_screening(self, state: FundForgeState, fund_ids: list[str]) -> AnalyzerOutput:
+        spec = ScreenSpec.from_state(state.get("screen_spec")) or ScreenSpec(raw_query="")
+        window_days = DAYS_PER_YEAR * spec.lookback_years
+        issues: list[str] = []
+        metrics_by_fund: dict[str, FundMetrics] = {}
+        for fid in fund_ids:
+            points = self._store.get_nav_series(fid)
+            if points:
+                end = max(p.nav_date for p in points)
+                start = end - timedelta(days=window_days)
+                points = [p for p in points if p.nav_date >= start]
+            metrics = compute_fund_metrics(points)
+            metrics_by_fund[fid] = metrics
+            if metrics.data_quality != DataQuality.COMPLETE:
+                issues.append(
+                    f"{fid}: 净值数据不足（{metrics.nav_point_count} 个有效点，"
+                    f"lookback={spec.lookback_years}年），指标不可信"
+                )
+
+        rows = [
+            PeerMetricsRow(
+                fund_id=fid,
+                period_start=m.period_start,
+                period_end=m.period_end,
+                nav_point_count=m.nav_point_count,
+                cumulative_return=m.cumulative_return,
+                annualized_return=m.annualized_return,
+                annual_volatility=m.annual_volatility,
+                max_drawdown=m.max_drawdown,
+                sharpe=m.sharpe,
+                sortino=m.sortino,
+                trailing_returns=m.trailing_returns,
+                nav_basis=m.nav_basis,
+            )
+            for fid, m in metrics_by_fund.items()
+        ]
+        first = fund_ids[0]
+        primary = metrics_by_fund[first]
+        analysis = AnalysisResult(
+            performance=PerformanceAnalysis(
+                fund_id=first,
+                period_start=primary.period_start,
+                period_end=primary.period_end,
+                nav_point_count=primary.nav_point_count,
+                cumulative_return=primary.cumulative_return,
+                annualized_return=primary.annualized_return,
+                yearly_returns=primary.yearly_returns,
+                rolling_1y=primary.rolling_1y,
+                trailing_returns=primary.trailing_returns,
+                data_quality=primary.data_quality,
+            ),
+            risk=RiskAnalysis(
+                fund_id=first,
+                annual_volatility=primary.annual_volatility,
+                max_drawdown=primary.max_drawdown,
+                max_drawdown_recovery_days=primary.max_drawdown_recovery_days,
+                sharpe=primary.sharpe,
+                sortino=primary.sortino,
+                data_quality=primary.data_quality,
+            ),
+            peer_comparison=PeerComparison(base_fund_id=first, rows=rows),
+            holdings_metrics=[],
+        )
+        evidence = [
+            self._screening_metrics_evidence(fid, metrics_by_fund[fid], spec.lookback_years)
+            for fid in fund_ids
+        ]
+        logger.info(
+            "analyzer: screening %d funds (lookback=%dy, window=trailing per fund)",
+            len(fund_ids),
+            spec.lookback_years,
+        )
+        return AnalyzerOutput(
+            analysis=analysis,
+            evidence=[*state.get("evidence", []), *evidence],
+            data_quality_issues=[*state.get("data_quality_issues", []), *issues],
+        )
+
+    def _screening_metrics_evidence(
+        self, fid: str, m: FundMetrics, lookback_years: int
+    ) -> Evidence:
+        """筛选路径单基金指标 calculation Evidence（Step 2 短名单理由绑定的数据源）。"""
+        return Evidence(
+            id=f"ev-{uuid.uuid4().hex[:12]}",
+            evidence_type=EvidenceType.CALCULATION,
+            source=_ANALYSIS_SOURCE,
+            source_detail="确定性量化计算（Analysis Engine，无 LLM；筛选 trailing 窗口）",
+            as_of=datetime.now(),
+            value={
+                "fund_id": fid,
+                "lookback_years": lookback_years,
+                "period_start": str(m.period_start) if m.period_start else None,
+                "period_end": str(m.period_end) if m.period_end else None,
+                "nav_point_count": m.nav_point_count,
+                "cumulative_return": m.cumulative_return,
+                "annualized_return": m.annualized_return,
+                "annual_volatility": m.annual_volatility,
+                "max_drawdown": m.max_drawdown,
+                "sharpe": m.sharpe,
+                "sortino": m.sortino,
+                "nav_basis": m.nav_basis,
+            },
+            data_quality=m.data_quality,
+            raw_ref=FundStore.nav_ref(fid),
         )
 
     def _build_analysis(

@@ -17,14 +17,14 @@ from typing import TypedDict
 
 from domain.analysis import AnalysisResult
 from domain.evaluation import EvaluationResult
-from domain.evidence import Evidence, LlmInteraction, ToolCallRecord
+from domain.evidence import Evidence, LlmInteraction, TokenUsage, ToolCallRecord
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report
 from domain.research import ResearchItem
+from domain.screening import ScreenResult, ScreenSpec, ScreeningMeta
 from domain.task_type import ClassificationRuleHit, TaskType
 from domain.thesis import Claim, InvestmentThesis
-from domain.evidence import TokenUsage
 
 
 class FundForgeState(TypedDict, total=False):
@@ -37,6 +37,12 @@ class FundForgeState(TypedDict, total=False):
 
     # === Planning ===
     research_plan: ResearchPlan
+
+    # === Screening 产出（fund_screening；预选集经 fund_ids 流向 Collector/Analyzer） ===
+    screen_spec: ScreenSpec
+    screen_rank_rows: dict[str, dict]     # fund_code → rank 表行摘要（锚点收益/名称/费率）
+    screening_meta: ScreeningMeta
+    screening_result: ScreenResult
 
     # === Collector 产出（摘要 + ID，完整数据在外部 Store） ===
     fund_ids: list[str]
@@ -69,4 +75,16 @@ class FundForgeState(TypedDict, total=False):
     report: Report
 
 
-__all__ = ["FundForgeState"]
+def current_usage(state: FundForgeState) -> TokenUsage:
+    """读 State 的累计 token 用量（LangGraph 回传后可能是 dict，需归一化）。
+
+    产出 token_usage 的节点（thesis / screener）共用本入口，避免各写一份
+    归一化逻辑后彼此漂移。
+    """
+    raw = state.get("token_usage")
+    if raw is None or isinstance(raw, TokenUsage):
+        return raw or TokenUsage()
+    return TokenUsage.model_validate(raw)
+
+
+__all__ = ["FundForgeState", "current_usage"]

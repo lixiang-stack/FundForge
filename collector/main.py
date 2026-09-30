@@ -56,6 +56,25 @@ FIELD_MAPS = {
         "拼音缩写": "pinyin_abbr",
         "拼音全称": "pinyin_full",
     },
+    # fund_open_fund_rank_em 排行表（筛选候选池来源）；序号/自定义列无消费方，不映射
+    "fund_rank": {
+        "基金代码": "fund_code",
+        "基金简称": "fund_name",
+        "日期": "nav_date",
+        "单位净值": "unit_nav",
+        "累计净值": "acc_nav",
+        "日增长率": "daily_return",
+        "近1周": "return_1w",
+        "近1月": "return_1m",
+        "近3月": "return_3m",
+        "近6月": "return_6m",
+        "近1年": "return_1y",
+        "近2年": "return_2y",
+        "近3年": "return_3y",
+        "今年来": "return_ytd",
+        "成立来": "return_since_inception",
+        "手续费": "fee_rate",
+    },
     "fund_nav_unit": {
         "净值日期": "nav_date",
         "单位净值": "unit_nav",
@@ -482,7 +501,7 @@ def get_money_fund_daily():
 def get_fund_rank(symbol: str = Query("全部", description="基金类型")):
     """基金排行"""
     df = ak.fund_open_fund_rank_em(symbol=symbol)
-    return df_to_response(df)
+    return df_to_response(df, mapping_key="fund_rank")
 
 
 # ---- Trade Calendar ----

@@ -273,9 +273,17 @@ END
 **Deterministic Edges**  
 router → planner → collector → analyzer → researcher → thesis → evaluator → synthesizer → END
 
-**Conditional Edge**  
+**Conditional Edges**  
+planner  
+├── task_type=fund_screening → screener（筛选分支：screener → collector → analyzer → screen_finalize → evaluator，跳过 researcher/thesis/repair，详见 agent/docs/fund-screening.md）  
+├── 有 fund_ids → collector  
+└── 无 fund_ids → synthesizer（短路）  
+analyzer  
+├── task_type=fund_screening → screen_finalize  
+└── 其余 → researcher  
 evaluator  
 ├── PASS → synthesizer  
+├── task_type=fund_screening → synthesizer（筛选无 repair 回路）  
 └── FAIL → repair（仅 1 次）
 
 **重要约束**  

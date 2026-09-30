@@ -20,6 +20,13 @@ from typing import TypedDict
 from domain.analysis import AnalysisResult
 from domain.evaluation import EvaluationResult, EvaluationStatus
 from domain.evidence import Evidence
+from domain.screening import (
+    BIAS_DISCLOSURE,
+    SORT_ATTRS,
+    ScreenResult,
+    ScreenSpec,
+    SortKey,
+)
 from domain.shared import DataQuality, coerce_model
 from domain.task_type import COMPARISON_INTENT_KEYWORDS, TaskType
 from domain.thesis import Claim, InvestmentThesis
@@ -41,6 +48,71 @@ class EvaluatorNode:
     """Evaluator 节点：对 Thesis / Claim / Evidence 做确定性验证。"""
 
     def __call__(self, state: FundForgeState) -> EvaluatorOutput:
+        if state.get("task_type") == TaskType.FUND_SCREENING:
+            return self._evaluate_screening(state)
+        return self._evaluate_research(state)
+
+    # ---- 筛选路径（task_type=fund_screening）----
+    # 确定性检查（agent/docs/fund-screening.md §7）：行数、指标齐全、披露完整、排序一致。
+    # 无 claims/thesis，不适用证据覆盖率检查；FAIL 由 Graph 直达 Synthesizer（不进 repair）。
+
+    def _evaluate_screening(self, state: FundForgeState) -> EvaluatorOutput:
+        spec = ScreenSpec.from_state(state.get("screen_spec")) or ScreenSpec(raw_query="")
+        result = coerce_model(state.get("screening_result"), ScreenResult)
+        missing: list[str] = []
+        alignment: list[str] = []
+
+        if result is None:
+            missing.append("筛选结果缺失（screening_result 未产出）")
+        else:
+            if len(result.entries) > result.top_n:
+                missing.append(f"短名单行数 {len(result.entries)} 超过 Top {result.top_n}")
+            if not result.entries and not result.empty_reason:
+                missing.append("短名单为空且未说明原因")
+            for entry in result.entries:
+                if entry.annualized_return is None or entry.max_drawdown is None or entry.sharpe is None:
+                    missing.append(f"短名单条目 {entry.fund_id} 核心指标缺失（年化/回撤/夏普）")
+                    break
+            gaps_text = "\n".join(result.data_gaps)
+            for item in spec.unsupported_requirements:
+                if item and item not in gaps_text:
+                    missing.append(f"无法落地条件「{item}」未在缺口披露")
+            if spec.uses_risk_metrics() and BIAS_DISCLOSURE not in gaps_text:
+                missing.append("使用了风险指标但未披露预选集样本偏差")
+            if not result.anchor:
+                missing.append("预筛锚点未披露")
+            if result.universe_size <= 0:
+                missing.append("候选池大小未披露")
+            values = [self._screening_sort_value(spec, e) for e in result.entries]
+            if len(values) > 1 and any(v is None for v in values):
+                alignment.append("排序键存在缺失，无法校验排序一致性")
+            elif len(values) > 1:
+                reverse = spec.sort_order == "desc"
+                if values != sorted(values, reverse=reverse):
+                    alignment.append("短名单顺序与 ScreenSpec 排序键不一致")
+
+        issue_groups = [missing, alignment]
+        evaluation = EvaluationResult(
+            status=EvaluationStatus.FAIL if any(issue_groups) else EvaluationStatus.PASS,
+            missing_items=missing,
+            question_alignment_issues=alignment,
+            data_quality_issues=list(state.get("data_quality_issues", [])),
+            overall_score=_overall_score(issue_groups),
+            claim_coverage_ratio=1.0,
+        )
+        logger.info(
+            "evaluator: screening status=%s missing=%d alignment=%d",
+            evaluation.status, len(missing), len(alignment),
+        )
+        return {"evaluation": evaluation}
+
+    @classmethod
+    def _screening_sort_value(cls, spec: ScreenSpec, entry) -> float | None:
+        if spec.sort_by == SortKey.PERIOD_RETURN:
+            return entry.period_return
+        return getattr(entry, SORT_ATTRS[spec.sort_by])
+
+    def _evaluate_research(self, state: FundForgeState) -> EvaluatorOutput:
         thesis = coerce_model(state.get("investment_thesis"), InvestmentThesis)
         claims = [
             c if isinstance(c, Claim) else Claim.model_validate(c)

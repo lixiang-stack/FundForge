@@ -27,7 +27,7 @@ from limits import (
     THESIS_MAX_SUMMARY_CHARS,
 )
 from llm.base import LLMError, LLMProvider, Message
-from state import FundForgeState
+from state import FundForgeState, current_usage
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class ThesisNode:
         if not evidence:
             return self._degrade(state, "无可用 Evidence，跳过投资论点生成")
 
-        usage = self._current_usage(state)
+        usage = current_usage(state)
         interactions = [
             coerce_model(i, LlmInteraction)
             for i in (state.get("llm_interactions") or [])
@@ -244,13 +244,6 @@ class ThesisNode:
         if llm_interactions is not None:
             output["llm_interactions"] = llm_interactions
         return output
-
-    @staticmethod
-    def _current_usage(state: FundForgeState) -> TokenUsage:
-        raw = state.get("token_usage")
-        if raw is None or isinstance(raw, TokenUsage):
-            return raw or TokenUsage()
-        return TokenUsage.model_validate(raw)
 
 
 __all__ = ["ThesisNode", "build_thesis_prompt"]

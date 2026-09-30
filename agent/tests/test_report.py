@@ -323,7 +323,7 @@ class TestReportNewSections:
 
     def test_market_split_rendered_as_percent(self):
         # 回归：market_split 字段本身是百分数（59.89 表示 59.89%），
-        # 渲染不得再走 _fmt_pct（小数×100），否则出现 5989.00% 双重百分比
+        # 渲染不得再走 fmt_pct（小数×100），否则出现 5989.00% 双重百分比
         analysis = _base_state()["analysis"] | {
             "holdings_metrics": [
                 {

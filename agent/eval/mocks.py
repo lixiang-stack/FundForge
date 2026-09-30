@@ -94,6 +94,25 @@ FUND_LIST_ROWS = [
     {"fund_code": "015453", "fund_name": "中证500指数增强A", "fund_type": "指数型-股票", "pinyin_abbr": "zz500zjqA"},
 ]
 
+# 排行表（FIELD_MAPS["fund_rank"] 标准化输出，百分数列保留源格式）
+RANK_ROWS = [
+    {"fund_code": "000001", "fund_name": "甲指数A", "nav_date": "2026-09-25", "unit_nav": 1.8, "return_1y": "15.30%", "return_3y": "30.00%", "fee_rate": "0.15%"},
+    {"fund_code": "000002", "fund_name": "乙指数A", "nav_date": "2026-09-25", "unit_nav": 1.1, "return_1y": "11.40%", "return_3y": "50.00%", "fee_rate": "0.10%"},
+    {"fund_code": "000999", "fund_name": "丙指数A", "nav_date": "2026-09-25", "unit_nav": 2.2, "return_1y": "12.00%", "return_3y": "25.00%", "fee_rate": "0.12%"},
+    {"fund_code": "000555", "fund_name": "丁指数A", "nav_date": "2026-09-25", "unit_nav": 1.4, "return_1y": "9.00%", "return_3y": "8.00%", "fee_rate": "0.15%"},
+]
+
+# 筛选档位净值：近 3 年窗口内密集采样（区间跨度 ≥ 3 年，per-fund trailing 窗口可计算指标）
+_SCREENING_UNIT_ROWS = [
+    {"nav_date": "2023-09-08", "unit_nav": 1.00, "daily_return": 0.0},
+    {"nav_date": "2024-03-08", "unit_nav": 1.10, "daily_return": 0.3},
+    {"nav_date": "2024-09-09", "unit_nav": 1.25, "daily_return": 0.2},
+    {"nav_date": "2025-03-10", "unit_nav": 1.20, "daily_return": -0.4},
+    {"nav_date": "2025-09-08", "unit_nav": 1.45, "daily_return": 0.5},
+    {"nav_date": "2026-03-09", "unit_nav": 1.60, "daily_return": 0.2},
+    {"nav_date": "2026-09-08", "unit_nav": 1.80, "daily_return": 0.4},
+]
+
 
 def _transport(
     *,
@@ -108,11 +127,14 @@ def _transport(
     achievement_rows: list | None = None,
     rating_rows: list | None = None,
     index_rows: list | None = None,
+    rank_rows: list | None = None,
 ) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if status != 200:
             return httpx.Response(status, json={"detail": "mock failure"})
         path = request.url.path
+        if path == "/api/funds/rank":
+            return httpx.Response(200, json=RANK_ROWS if rank_rows is None else rank_rows)
         if path.endswith("/detail"):
             return httpx.Response(200, json=DETAIL_ROWS if detail_rows is None else detail_rows)
         if path.endswith("/nav"):
@@ -149,6 +171,7 @@ PROFILES: dict[str, Callable[[], httpx.MockTransport]] = {
     "mock_fail_all": lambda: _transport(status=500),
     "mock_empty_holdings": lambda: _transport(holdings_rows=[]),
     "mock_empty_detail": lambda: _transport(detail_rows=[]),
+    "mock_screening_ok": lambda: _transport(unit_rows=_SCREENING_UNIT_ROWS, acc_rows=[]),
 }
 
 

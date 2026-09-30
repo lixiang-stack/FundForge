@@ -11,12 +11,14 @@ import logging
 from datetime import datetime
 from typing import TypedDict
 
+from formatting import TABLE_MISSING, fmt_pct, fmt_ratio
 from domain.analysis import AnalysisResult, PeerComparison
 from domain.evaluation import EvaluationResult, EvaluationStatus
 from domain.evidence import TokenUsage
 from domain.fund import FundSummary
 from domain.plan import ResearchPlan
 from domain.report import Report, ReportMetadata, render_markdown
+from domain.screening import ScreenResult, ScreenSpec
 from domain.shared import coerce_model
 from domain.thesis import InvestmentThesis
 from domain.task_type import TaskType
@@ -68,6 +70,8 @@ class SynthesizerNode:
         plan = ResearchPlan.from_state(state.get("research_plan"))
         notes = list(plan.notes) if plan else []
         is_comparison = plan is not None and plan.task_type == TaskType.FUND_COMPARISON
+        if plan is not None and plan.task_type == TaskType.FUND_SCREENING:
+            return self._screening_report(state, notes)
 
         primary = summaries[0] if summaries else None
         data_gaps = [*notes, *(thesis.data_gaps if thesis else [])]
@@ -155,15 +159,48 @@ class SynthesizerNode:
         )
         return SynthesizerOutput(report=report)
 
+    # ---- 筛选路径（task_type=fund_screening）：短名单报告，无 thesis/claims ----
 
-def _fmt_pct(value: float | None) -> str:
-    """小数 → 百分比字符串（2 位小数）；None → 未知。"""
-    return f"{value * 100:.2f}%" if value is not None else "未知"
+    def _screening_report(self, state: FundForgeState, notes: list[str]) -> SynthesizerOutput:
+        spec = ScreenSpec.from_state(state.get("screen_spec")) or ScreenSpec(raw_query="")
+        result = coerce_model(state.get("screening_result"), ScreenResult)
+        evaluation = coerce_model(state.get("evaluation"), EvaluationResult)
+        evidence = state.get("evidence", [])
+        usage = coerce_model(state.get("token_usage"), TokenUsage) or TokenUsage()
 
+        data_gaps = [*notes, *(result.data_gaps if result else [])]
+        data_gaps += [f"假设：{a}" for a in spec.assumptions]
+        if result is None:
+            data_gaps.append("筛选结果未产出（screening_result 缺失）")
 
-def _fmt_ratio(value: float | None) -> str:
-    """比率 → 2 位小数字符串（夏普 / Sortino）；None → 未知。"""
-    return f"{value:.2f}" if value is not None else "未知"
+        report = Report(
+            title=f"FundForge 基金筛选报告（Top {spec.top_n}）",
+            generated_at=datetime.now(),
+            request_id=state.get("request_id", ""),
+            executive_summary=_screening_executive_summary(result, spec),
+            fund_overview=[],
+            screening_result=result,
+            data_gaps_and_limitations=data_gaps,
+            risks_and_disclaimers=[_DATA_ADVISORY, _DISCLAIMER],
+            metadata=ReportMetadata(
+                fund_count=len(result.entries) if result else 0,
+                evidence_count=len(evidence),
+                tool_call_count=len(state.get("tool_calls", [])),
+                data_quality_issue_count=len(state.get("data_quality_issues", [])),
+                thesis_generated=False,
+                evaluation_status=evaluation.status if evaluation else None,
+                repair_applied=False,
+                llm_calls=usage.llm_calls,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                task_type=str(TaskType.FUND_SCREENING),
+            ),
+        )
+        logger.info(
+            "synthesizer: screening report built (%d entries)",
+            len(result.entries) if result else 0,
+        )
+        return SynthesizerOutput(report=report)
 
 
 def _executive_summary(
@@ -182,8 +219,8 @@ def _executive_summary(
         perf = analysis.performance
         parts.append(
             f"确定性量化分析：{perf.period_start} ~ {perf.period_end}"
-            f"（{perf.nav_point_count} 个净值点）累计收益 {_fmt_pct(perf.cumulative_return)}，"
-            f"年化收益 {_fmt_pct(perf.annualized_return)}。"
+            f"（{perf.nav_point_count} 个净值点）累计收益 {fmt_pct(perf.cumulative_return)}，"
+            f"年化收益 {fmt_pct(perf.annualized_return)}。"
         )
     if thesis is not None:
         parts.append(f"投资论点：{thesis.suitability}")
@@ -223,25 +260,25 @@ def _performance_text(primary: FundSummary | None, analysis: AnalysisResult | No
     if perf.period_start and perf.period_end:
         rows.append(["区间（净值点数）", f"{perf.period_start} ~ {perf.period_end}（{perf.nav_point_count} 点）"])
     if perf.cumulative_return is not None:
-        rows.append(["累计收益", _fmt_pct(perf.cumulative_return)])
+        rows.append(["累计收益", fmt_pct(perf.cumulative_return)])
     if perf.annualized_return is not None:
-        rows.append(["年化收益", _fmt_pct(perf.annualized_return)])
+        rows.append(["年化收益", fmt_pct(perf.annualized_return)])
     rows += [
-        [label, _fmt_pct(trailing[key])]
+        [label, fmt_pct(trailing[key])]
         for key, label in _TRAILING_LABELS
         if trailing.get(key) is not None
     ]
     if perf.excess_return is not None:
         benchmark = f"（{perf.benchmark_code}）" if perf.benchmark_code else ""
-        rows.append([f"相对基准超额{benchmark}", _fmt_pct(perf.excess_return)])
+        rows.append([f"相对基准超额{benchmark}", fmt_pct(perf.excess_return)])
         if perf.tracking_error is not None:
-            rows.append(["近似跟踪误差", _fmt_pct(perf.tracking_error)])
+            rows.append(["近似跟踪误差", fmt_pct(perf.tracking_error)])
     rolling = perf.rolling_1y
     if rolling is not None and rolling.min is not None:
         rows.append(
             [
                 f"滚动{rolling.window_days}日（约1年）收益（最低/中位/最高）",
-                f"{_fmt_pct(rolling.min)} / {_fmt_pct(rolling.median)} / {_fmt_pct(rolling.max)}",
+                f"{fmt_pct(rolling.min)} / {fmt_pct(rolling.median)} / {fmt_pct(rolling.max)}",
             ]
         )
     if not rows:
@@ -250,7 +287,7 @@ def _performance_text(primary: FundSummary | None, analysis: AnalysisResult | No
     subject = f"{primary.id} {primary.name}（主体基金）" if primary else ""
     lines = ([subject, ""] if subject else []) + _md_table(["指标", "数值"], rows)
     yearly = sorted((perf.yearly_returns or {}).items())
-    yearly_rows = [[f"{y}年", _fmt_pct(r)] for y, r in yearly if r is not None]
+    yearly_rows = [[f"{y}年", fmt_pct(r)] for y, r in yearly if r is not None]
     if yearly_rows:
         lines += ["", "分年度收益：", "", *_md_table(["年份", "收益"], yearly_rows)]
     return "\n".join(lines)
@@ -263,18 +300,18 @@ def _risk_text(primary: FundSummary | None, analysis: AnalysisResult | None) -> 
     risk = analysis.risk
     rows: list[list[str]] = []
     if risk.annual_volatility is not None:
-        rows.append(["年化波动率", _fmt_pct(risk.annual_volatility)])
+        rows.append(["年化波动率", fmt_pct(risk.annual_volatility)])
     if risk.max_drawdown is not None:
-        rows.append(["最大回撤", _fmt_pct(risk.max_drawdown)])
+        rows.append(["最大回撤", fmt_pct(risk.max_drawdown)])
     if risk.max_drawdown not in (None, 0.0):
         if risk.max_drawdown_recovery_days is not None:
             rows.append(["最大回撤修复", f"{risk.max_drawdown_recovery_days} 个自然日"])
         else:
             rows.append(["最大回撤修复", "截至期末尚未修复"])
     if risk.sharpe is not None:
-        rows.append(["夏普比率", _fmt_ratio(risk.sharpe)])
+        rows.append(["夏普比率", fmt_ratio(risk.sharpe)])
     if risk.sortino is not None:
-        rows.append(["Sortino", _fmt_ratio(risk.sortino)])
+        rows.append(["Sortino", fmt_ratio(risk.sortino)])
     if not rows:
         return ""
     subject = f"{primary.id} {primary.name}（主体基金）" if primary else ""
@@ -291,12 +328,29 @@ def _peer_text(analysis: AnalysisResult | None, summaries: list[FundSummary] | N
     for row in pc.rows:
         sharpe = f"{row.sharpe:.2f}" if row.sharpe is not None else "未知"
         lines.append(
-            f"- {_fund_label(row.fund_id, names)}: 年化收益 {_fmt_pct(row.annualized_return)}，"
-            f"年化波动 {_fmt_pct(row.annual_volatility)}，"
-            f"最大回撤 {_fmt_pct(row.max_drawdown)}，夏普 {sharpe}"
+            f"- {_fund_label(row.fund_id, names)}: 年化收益 {fmt_pct(row.annualized_return)}，"
+            f"年化波动 {fmt_pct(row.annual_volatility)}，"
+            f"最大回撤 {fmt_pct(row.max_drawdown)}，夏普 {sharpe}"
         )
     lines.append(_ALIGNMENT_NOTE)
     return "\n".join(lines)
+
+
+def _screening_executive_summary(result: ScreenResult | None, spec: ScreenSpec) -> str:
+    """筛选摘要：候选池/锚点/预选集 + 短名单标签（或 0 只原因）。"""
+    if result is None:
+        return "筛选流程未产出结果。"
+    type_text = "、".join(spec.fund_types) if spec.fund_types else "全部主类"
+    parts = [
+        f"筛选候选池 {result.universe_size} 只（类型：{type_text}），"
+        f"预筛锚点：{result.anchor}，预选集 {result.preselected_size} 只。"
+    ]
+    if result.entries:
+        labels = "、".join(f"{e.fund_id} {e.name or ''}".strip() for e in result.entries)
+        parts.append(f"短名单 {len(result.entries)} 只：{labels}。")
+    elif result.empty_reason:
+        parts.append(result.empty_reason)
+    return "\n\n".join(parts)
 
 
 def _comparison_title(summaries: list[FundSummary]) -> str:
@@ -322,7 +376,7 @@ def _comparison_executive_summary(
             parts.append(f"对齐区间 {window.period_start} ~ {window.period_end}。")
         parts.append(
             "确定性量化分析："
-            + "、".join(f"{r.fund_id} 年化 {_fmt_pct(r.annualized_return)}" for r in rows)
+            + "、".join(f"{r.fund_id} 年化 {fmt_pct(r.annualized_return)}" for r in rows)
             + "。"
         )
     if thesis is not None:
@@ -354,9 +408,9 @@ def _comparison_peer_text(analysis: AnalysisResult | None, summaries: list[FundS
     ]
     for r in pc.rows:
         lines.append(
-            f"| {_fund_label(r.fund_id, names)} | {_fmt_pct(r.cumulative_return)} "
-            f"| {_fmt_pct(r.annualized_return)} | {_fmt_pct(r.annual_volatility)} "
-            f"| {_fmt_pct(r.max_drawdown)} | {_fmt_ratio(r.sharpe)} | {_fmt_ratio(r.sortino)} "
+            f"| {_fund_label(r.fund_id, names)} | {fmt_pct(r.cumulative_return)} "
+            f"| {fmt_pct(r.annualized_return)} | {fmt_pct(r.annual_volatility)} "
+            f"| {fmt_pct(r.max_drawdown)} | {fmt_ratio(r.sharpe)} | {fmt_ratio(r.sortino)} "
             f"| {_excess_cell(r)} |"
         )
     trailing_lines = _trailing_returns_table(pc, names)
@@ -387,7 +441,7 @@ def _trailing_returns_table(pc: PeerComparison, names: dict[str, str]) -> list[s
     for r in pc.rows:
         trailing = r.trailing_returns or {}
         cells = " | ".join(
-            _fmt_pct(trailing[key]) if trailing.get(key) is not None else "—"
+            fmt_pct(trailing[key], TABLE_MISSING)
             for key, _ in _TRAILING_LABELS
         )
         lines.append(f"| {_fund_label(r.fund_id, names)} | {cells} |")
@@ -399,7 +453,7 @@ def _excess_cell(row) -> str:
     if row.excess_return is None:
         return "—"
     benchmark = f"（{row.benchmark_code}）" if row.benchmark_code else ""
-    return f"{_fmt_pct(row.excess_return)}{benchmark}"
+    return f"{fmt_pct(row.excess_return)}{benchmark}"
 
 
 def _holdings_overlap_lines(pc: PeerComparison, names: dict[str, str]) -> list[str]:
@@ -453,7 +507,7 @@ def _comparison_differences_text(
         worst = pick_worst(items, key=lambda t: t[1])
         if best[1] == worst[1]:
             continue
-        fmt = _fmt_pct if is_pct else _fmt_ratio
+        fmt = fmt_pct if is_pct else fmt_ratio
         value_map = dict(items)
         value_cells = " | ".join(
             fmt(value_map[fid]) if fid in value_map else "—" for fid in fund_ids
@@ -506,13 +560,13 @@ def _comparison_recommendation_text(
     if ret is not None and sharpe is not None and ret[0] == sharpe[0]:
         verdict = (
             f"综合收益与风险调整后表现，{_fund_label(ret[0], names)} 在同口径区间内同时领先"
-            f"（年化收益 {_fmt_pct(ret[1])}、夏普 {sharpe[1]:.2f}）；"
+            f"（年化收益 {fmt_pct(ret[1])}、夏普 {sharpe[1]:.2f}）；"
             f"确定性倾向：长期持有场景下 {_fund_label(ret[0], names)} 相对更契合。"
         )
     elif ret is not None and sharpe is not None:
         verdict = (
             f"收益与风险调整后表现由不同基金领先：年化收益 {_fund_label(ret[0], names)} 最高"
-            f"（{_fmt_pct(ret[1])}），夏普比率 {_fund_label(sharpe[0], names)} 最高"
+            f"（{fmt_pct(ret[1])}），夏普比率 {_fund_label(sharpe[0], names)} 最高"
             f"（{sharpe[1]:.2f}）；确定性倾向：追求收益弹性更契合 {_fund_label(ret[0], names)}，"
             f"控制回撤与波动更契合 {_fund_label(sharpe[0], names)}。"
         )
@@ -526,7 +580,7 @@ def _comparison_recommendation_text(
             )
         else:
             metric = "年化收益" if ret is not None else "夏普比率"
-            value = _fmt_pct(leader[1]) if ret is not None else f"{leader[1]:.2f}"
+            value = fmt_pct(leader[1]) if ret is not None else f"{leader[1]:.2f}"
             verdict = (
                 f"在可比的同口径指标中，{_fund_label(leader[0], names)} 的{metric}领先（{value}）；"
                 f"确定性倾向：长期持有场景下 {_fund_label(leader[0], names)} 相对更契合。"
@@ -725,7 +779,7 @@ def _market_split_bits(split) -> str:
     ]
     bits = [
         # market_split 各字段已是百分数（"acc"口径注释见 engine.market_split），
-        # 不能走 _fmt_pct（其语义为小数×100），否则渲染成 5989.00% 这类双重百分比
+        # 不能走 fmt_pct（其语义为小数×100），否则渲染成 5989.00% 这类双重百分比
         f"{label} {getattr(split, key):.2f}%"
         for key, label in labels
         if getattr(split, key) is not None

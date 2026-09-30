@@ -121,6 +121,56 @@ class TestConditionalRouting:
             client.close()
 
 
+class TestScreeningRouting:
+    def _screening_transport(self):
+        return make_transport(
+            rank_rows=[
+                {"fund_code": "000001", "fund_name": "甲指数", "return_3y": "30.00%"},
+                {"fund_code": "000002", "fund_name": "乙指数", "return_3y": "50.00%"},
+                {"fund_code": "000003", "fund_name": "丙指数", "return_3y": "10.00%"},
+            ]
+        )
+
+    def test_screening_query_routes_through_screening_path(self):
+        client = CollectorClient(
+            base_url="http://collector.test", transport=self._screening_transport()
+        )
+        try:
+            graph = build_graph(client=client, llm=None)
+            result = graph.invoke(
+                {"request_id": "t9", "user_query": "筛选近三年收益超过20%的指数基金"}
+            )
+            assert result["task_type"] == TaskType.FUND_SCREENING
+            assert result["fund_ids"] == ["000002", "000001"]  # 预选集：≥20% 按锚点降序
+            assert result["screening_result"].anchor
+            # 不走 researcher/thesis/repair
+            assert result.get("investment_thesis") is None
+            assert result.get("research_items", []) == []
+            assert result.get("iteration", 0) == 0
+            report = result["report"]
+            assert report.metadata.task_type == "fund_screening"
+            assert report.metadata.evaluation_status == "pass"
+        finally:
+            client.close()
+
+    def test_route_functions_screening_branches(self):
+        from domain.evaluation import EvaluationResult, EvaluationStatus
+        from domain.plan import ResearchPlan
+        from graph import _route_after_analyzer, _route_after_evaluation, _route_after_plan
+
+        assert _route_after_plan({"research_plan": ResearchPlan(task_type=TaskType.FUND_SCREENING)}) == "screener"
+        assert _route_after_plan({"research_plan": ResearchPlan(fund_ids=["000001"])}) == "collector"
+        assert _route_after_plan({}) == "synthesizer"
+        assert _route_after_analyzer({"task_type": TaskType.FUND_SCREENING}) == "screen_finalize"
+        assert _route_after_analyzer({"task_type": TaskType.FUND_RESEARCH}) == "researcher"
+        fail_state = {
+            "task_type": TaskType.FUND_SCREENING,
+            "evaluation": EvaluationResult(status=EvaluationStatus.FAIL),
+            "iteration": 0,
+        }
+        assert _route_after_evaluation(fail_state) == "synthesizer"
+
+
 class TestRepairLoop:
     def test_missing_evidence_triggers_repair_then_forced_synthesizer(self):
         """验收：故意制造缺失 Evidence → Evaluator 检出 → Repair → 仍 FAIL → 强制 synthesizer。"""

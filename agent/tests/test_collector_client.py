@@ -69,3 +69,28 @@ def test_non_connect_error_not_retried():
         assert len(calls) == 1
     finally:
         client.close()
+
+
+def test_get_fund_rank_passes_symbol_and_returns_rows():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.url.path, dict(request.url.params)))
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "fund_code": "001594",
+                    "fund_name": "天弘中证500指数A",
+                    "return_3y": "35.60%",
+                }
+            ],
+        )
+
+    client = _client(handler)
+    try:
+        rows = client.get_fund_rank("指数型")
+        assert rows[0]["fund_code"] == "001594"
+        assert calls == [("/api/funds/rank", {"symbol": "指数型"})]
+    finally:
+        client.close()

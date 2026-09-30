@@ -48,6 +48,9 @@ from domain.shared import DataQuality
 
 TRADING_DAYS_PER_YEAR = 252
 DAYS_PER_YEAR = 365
+# 儒略年：日历年平均长度（365.2425 取两位）。仅用于「成立至今多少年」这类
+# 跨度换算；年化/回撤窗口一律用 DAYS_PER_YEAR，两者语义不同不可混用。
+DAYS_PER_YEAR_JULIAN = 365.25
 _MIN_DAYS_FOR_ANNUALIZATION = 30
 _MAX_COMMON_NAMES = 10
 _ROLLING_WINDOW_DAYS = 252

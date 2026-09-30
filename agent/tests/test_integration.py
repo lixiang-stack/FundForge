@@ -94,6 +94,25 @@ class TestRealDataPath:
         assert result["report"].peer_comparison is None
         assert result["investment_thesis"] is not None
 
+    def test_screening_real_rank_universe(self):
+        """fund_screening 端到端（真实排行表）：列映射事实核查 + 候选池预筛 + 短名单披露。"""
+        # 事实核查：真实 akshare 排行表列经 FIELD_MAPS["fund_rank"] 标准化
+        client = CollectorClient()
+        try:
+            rows = client.get_fund_rank("指数型")
+        finally:
+            client.close()
+        assert rows and all("fund_code" in r for r in rows[:5])
+
+        result = _run("筛选近三年收益超过10%的指数基金")
+        assert str(result["task_type"]) == "fund_screening"
+        screening = result["screening_result"]
+        assert screening.universe_size > 0
+        assert screening.anchor
+        report = result["report"]
+        assert report.metadata.task_type == "fund_screening"
+        assert any("不构成任何投资建议" in r for r in report.risks_and_disclaimers)
+
 
 class TestFailureInjection:
     def test_bogus_code_degrades_but_workflow_completes(self):
