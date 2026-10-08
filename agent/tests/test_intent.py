@@ -14,6 +14,15 @@ class TestExtractFundCodes:
     def test_ignores_non_6_digit(self):
         assert extract_fund_codes("基金 5197701 或 12345") == []
 
+    def test_codes_adjacent_to_chinese_characters(self):
+        # 回归：\b 在汉字与数字相邻处不成立，贴着中文的代码曾全部漏提
+        for query, expected in (
+            ("对比004237 000979两只基金", ["004237", "000979"]),
+            ("对比015453、004237、004814这几只基金", ["015453", "004237", "004814"]),
+            ("分析004237这只基金", ["004237"]),
+        ):
+            assert extract_fund_codes(query) == expected, query
+
 
 class TestClassify:
     def test_r1_dual_intent_with_subject_is_research(self):
