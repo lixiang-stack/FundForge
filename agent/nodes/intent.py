@@ -26,7 +26,9 @@ from domain.task_type import (
     TaskType,
 )
 
-_FUND_CODE_RE = re.compile(r"\b(\d{6})\b")
+# 不用 \b：Python 正则 \w 含 CJK 字符，「对比004237」中汉字与数字相邻处无边界，
+# 会导致贴着中文的代码全部漏提；(?<!\d)/(?!\d) 只要求两侧不是数字。
+_FUND_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
 # 强主题词：明确以某只基金为研究主体的表述（核心 Case）
 _SUBJECT_KEYWORDS = ("分析", "研究", "评估")
